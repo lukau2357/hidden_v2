@@ -63,3 +63,7 @@ def bilinear_resize(image, scale):
 
     return out.astype(image.dtype)
 ```
+
+## TODO (Completeness)
+* Investigate previous implementation.
+* Convince yourself why DCT implementation works.
