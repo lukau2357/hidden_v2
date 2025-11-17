@@ -1,0 +1,65 @@
+## Misc
+Implementation of bilinear image upsampling:
+```python
+import numpy as np
+
+def bilinear_resize(image, scale):
+    """
+    Bilinear upsampling of an image by a given scale factor.
+
+    Args:
+        image: numpy array, shape (H, W) or (H, W, C)
+        scale: float > 1, upsampling factor
+
+    Returns:
+        Resized image as numpy array.
+    """
+    if scale <= 1:
+        raise ValueError("Only upsampling supported. Scale must be > 1.")
+
+    # Original dimensions
+    h, w = image.shape[:2]
+    c = 1 if image.ndim == 2 else image.shape[2]
+
+    # New dimensions
+    new_h = int(h * scale)
+    new_w = int(w * scale)
+
+    # Create output grid
+    # Values in original coordinate system
+    y = np.linspace(0, h - 1, new_h)
+    x = np.linspace(0, w - 1, new_w)
+    x_grid, y_grid = np.meshgrid(x, y)
+
+    # Indices of the 4 neighbors
+    x0 = np.floor(x_grid).astype(int)
+    x1 = np.clip(x0 + 1, 0, w - 1)
+    y0 = np.floor(y_grid).astype(int)
+    y1 = np.clip(y0 + 1, 0, h - 1)
+
+    # Fractional parts
+    dx = x_grid - x0
+    dy = y_grid - y0
+
+    # Get the four neighbors
+    if c == 1:
+        Ia = image[y0, x0]
+        Ib = image[y1, x0]
+        Ic = image[y0, x1]
+        Id = image[y1, x1]
+    else:
+        Ia = image[y0, x0, :]
+        Ib = image[y1, x0, :]
+        Ic = image[y0, x1, :]
+        Id = image[y1, x1, :]
+
+    # Bilinear interpolation formula
+    out = (
+        Ia * (1 - dx) * (1 - dy)
+        + Ic * dx * (1 - dy)
+        + Ib * (1 - dx) * dy
+        + Id * dx * dy
+    )
+
+    return out.astype(image.dtype)
+```
