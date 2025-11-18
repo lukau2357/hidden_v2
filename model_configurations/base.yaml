@@ -1,3 +1,21 @@
+# capacity and true_resolution should match for embedder and extractor
+# this is redundant, but more convenient for parsing.
+
+embedder:
+  capacity: 32
+  num_layers: 3
+  true_resolution: 256
+  # Embedder is much shallower compared to extractor, try turning off StochasticPath for embedder
+  cnext_drop: 0
+
+extractor:
+  # Equivalent to ConvNeXt-T (T = Tiny)
+  capacity: 32
+  true_resolution: 256
+  channel_muls: [1, 2, 4, 8]
+  blocks: [3, 3, 9, 3]
+  cnext_drop: 0.1
+
 augmentations:
   train:
     DiffJPEG:

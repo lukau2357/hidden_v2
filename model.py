@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from torchvision import transforms
-from modules import ConvNeXtBlock, JND
+from modules import ConvNeXtBlock, JND, ConvNeXtLayerNorm
 from utils import normalize, unnormalize
 
 class Embedder(nn.Module):
@@ -23,7 +23,6 @@ class Embedder(nn.Module):
         self.true_resolution = true_resolution
         self.bottleneck_res = self.true_resolution // 2 ** num_layers
         self.jnd_alpha = jnd_alpha
-
         initial_channels = in_channels
         self.initial = nn.Conv2d(in_channels, base_channels, kernel_size = 1)
         encoder_conv = []
@@ -83,7 +82,6 @@ class Embedder(nn.Module):
 
         # Interpolation for images of variable size
         self.interp = transforms.Resize((true_resolution, true_resolution), interpolation = transforms.InterpolationMode.BILINEAR)
-
         # JND - Just Noticeable Difference
         self.jnd = JND(gamma = jnd_gamma, eps = jnd_eps)
 
@@ -143,3 +141,60 @@ class Embedder(nn.Module):
         input_norm = normalize(input) # Watermark is in range [-1, 1], so convert the input to same range before applying it.
         # JND on the other hand has to use an input image with quantization [0, 255]!
         return input_norm + self.jnd_alpha * jnd_attn * X # MaskMark does jnd_attn (X - input), is that better?
+    
+class Extractor(nn.Module):
+    """
+    Follows original ConvNeXt, in fact any given model in that paper can be constructed by giving appropriate channel_muls, base_channels and blocks 
+    values. For example, ConvNeXt-T corresponds to channel_muls = (1, 2, 4, 8), blocks = (3, 3, 9, 3), base_channels = 96.
+
+    ConvNeXt paper: https://arxiv.org/pdf/2201.03545
+    """
+    def __init__(self, capacity, channel_muls, blocks,
+                 true_resolution = 256,
+                 in_channels = 3,
+                 base_channels = 96,
+                 expansion = 4,
+                 cnext_ls = 1e-6, 
+                 cnext_drop = 0.1):
+    
+        super().__init__()
+
+        self.stem = nn.Sequential(nn.Conv2d(in_channels, base_channels, kernel_size = 4, stride = 4), ConvNeXtLayerNorm(base_channels))
+        modules = []
+        self.true_resolution = true_resolution
+        N = len(blocks)
+
+        for i in range(N):
+            for j in range(blocks[i]):
+                current_layer = ConvNeXtBlock(base_channels * channel_muls[i],
+                                              expansion = expansion,
+                                              layer_scale_init = cnext_ls,
+                                              drop_prob = cnext_drop)
+                modules.append(current_layer)
+
+            # No norm + downsampling for after last block
+            if i < N - 1:
+                modules.append(ConvNeXtLayerNorm(base_channels * channel_muls[i]))
+                modules.append(nn.Conv2d(base_channels * channel_muls[i], base_channels * channel_muls[i + 1], kernel_size = 2, stride = 2))
+        
+        self.main = nn.Sequential(*modules)
+
+        self.interp = transforms.Resize(size = (true_resolution, true_resolution), interpolation = transforms.InterpolationMode.BILINEAR)
+        self.global_average_pooling = nn.AdaptiveAvgPool2d((1, 1))
+        self.last_ln = nn.LayerNorm(base_channels * channel_muls[-1])
+        self.pred_linear = nn.Linear(base_channels * channel_muls[-1], capacity, bias = False)
+        
+    def forward(self, X):
+        # X [B, C, H, W], the input should be quantized to [-1, 1], will be ensured during training.
+        # Make sure this holds during inference as well!
+        _, _, H, W = X.shape
+
+        if H != self.true_resolution or W != self.true_resolution:
+            X = self.interp(X)
+
+        X = self.stem(X) # [B, base_channels, H // 4, W // 4], roughly
+        X = self.main(X) # [B, base_channels * channel_muls[-1], H', W'], severe downsampling
+        X  = self.global_average_pooling(X).squeeze(-1).squeeze(-1) # [B, base_channels * channel_muls[-1]]
+        X = self.last_ln(X)
+        X = self.pred_linear(X)
+        return X

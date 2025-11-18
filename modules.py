@@ -12,7 +12,7 @@ class DropPath(nn.Module):
         
         keep_prob = 1 - self.drop_prob
         shape = (x.shape[0],) + (1,) * (x.ndim - 1) # (B, 1, 1, 1) for images
-        mask = torch.rand(shape, device = x.device) < keep_prob # For some batches
+        mask = torch.rand(shape, device = x.device) < keep_prob # For some samples residual connection is kept alive, for some it's turned off.
         return x * mask / keep_prob # Preserves expectation of the input tensor 
 
 class ConvNeXtBlock(nn.Module):
@@ -80,3 +80,17 @@ class JND(nn.Module):
         H[:, 1] *= 0.5 
 
         return H / 255 # [B, 3, H, W]
+    
+class ConvNeXtLayerNorm(nn.Module):
+    # Used in Extractor component, explicit layer for ConvNeXt style layer normalization.
+    # Not used in Embedder, for now.
+    def __init__(self, channels):
+        super().__init__()
+        self.ln = nn.LayerNorm(channels)
+    
+    def forward(self, X):
+        # X [B, C, H, W]
+        X = X.permute(0, 2, 3, 1) # [B, H, W, C]
+        X = self.ln(X)
+        X = X.permute(0, 3, 1, 2) # [B, C, H, W]
+        return X

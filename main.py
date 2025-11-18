@@ -7,7 +7,7 @@ from augmentations.valuemetric import DiffJPEG, Hue, GaussianBlur, Contrast, Bri
 from augmentations.geometric import Combine, Rotate, Crop
 from augmentations.geometric import Resize as ResizeAug, Perspective, HorizontalFlip
 from augmentations.splicing import PixelSplicing, BoxSplicing
-from model import Embedder
+from model import Embedder, Extractor
 from PIL import Image
 from torchvision.transforms import Resize
 from utils import normalize, unnormalize, psnr
@@ -17,43 +17,49 @@ if __name__ == "__main__":
     device = "cuda"
     image_orig = Image.open("./val2014/val2014/COCO_val2014_000000000074.jpg")
     image_orig = np.asarray(image_orig)
+
+    with open("./model_configurations/base.yaml", encoding = "utf-8") as f:
+        conf = yaml.safe_load(f)
+
     X = torch.tensor(image_orig.transpose((2, 0, 1)), device = device, dtype = torch.float32).unsqueeze(0)
     r = Resize((512, 512))
     X = r(X)
 
-    model = Embedder(32).to(device)
-    with torch.no_grad():
-        message = (torch.rand((1, 32), device = device) >= 0.5).to(torch.int32)
-        X_wm = model(X, message).clamp(-1, 1)
+    model = Embedder(**conf["embedder"]).to(device)
+    test = Augmenter(conf["augmentations"]["train"]).to(device)
+    extractor = Extractor(**conf["extractor"]).to(device)
+    exit(0)
+
+    params = 0
+    for param in model.parameters():
+        if param.requires_grad:
+            params += param.numel()
+    print(f"Number of embedder parameters: {params / 1e6}M.")
+
+    message = (torch.rand((1, conf["embedder"]["capacity"]), device = device) >= 0.5).to(torch.int32)
+    X_wm = model(X, message).clamp(-1, 1)
     
     X = normalize(X)
-    with open("./model_configurations/base.yaml", encoding = "utf-8") as f:
-        conf = yaml.safe_load(f)
     
-    test = Augmenter(conf["augmentations"]["train"]).to(device)
     X_ed = test(X, X_wm)
     
+    params = 0
+    for param in extractor.parameters():
+        if param.requires_grad:
+            params += param.numel()
+    
+    print(f"Number of extractor parameters: {params / 1e6}M.")
+
+    preds = extractor(X_ed)
+    print(preds.shape)
+
     X = unnormalize(X)
     X_ed = unnormalize(X_ed)
     print(X.shape)
     print(X_ed.shape)
 
-    # model = Embedder(32).to(device)
-    # with torch.no_grad():
-    #     message = (torch.rand((1, 32), device = device) >= 0.5).to(torch.int32)
-    #     X_wm = model(X, message).clamp(-1, 1)
-    
-    # X = normalize(X)
-    # print(f"PSNR between original and watermarked image: {psnr(X, X_wm):.4f} dB.")
-    # splicing = BoxSplicing(min_size = 0.15, max_size = 0.3)
-    # X_ed = splicing(X, X_wm)
-    # print(f"PSNR between original and watermark spliced image: {psnr(X, X_ed):.4f} dB.")
-    # X = unnormalize(X)
-    # X_ed = unnormalize(X_ed)
-    # X_ed = unnormalize(X_wm)
-
     X = X.cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
-    X_ed = X_ed.cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
+    X_ed = X_ed.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
 
     fig, ax = plt.subplots(ncols = 2)
     ax[0].imshow(X)
