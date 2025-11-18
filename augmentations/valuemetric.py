@@ -3,31 +3,15 @@ import torch.nn as nn
 import numpy as np
 import math
 
-from utils import jpeg_compress, normalize, unnormalize, diff_round, quantize, dequantize, img_to_blocks, blocks_to_img
+from utils import quantize, dequantize, img_to_blocks, blocks_to_img, normalize, unnormalize
+from torchvision import transforms
 
-class JPEG(nn.Module):
-    # Adapted from: https://github.com/facebookresearch/watermark-anything/blob/main/watermark_anything/augmentation/valuemetric.py#L23
-    def __init__(self, min_quality = None, max_quality = None, passthrough = True):
-        super().__init__()
-        self.min_quality = min_quality
-        self.max_quality = max_quality
-        self.passthrough = passthrough
+# Most augmentations (except for DiffJPEG) are taken from WAM implementation:
+# https://github.com/facebookresearch/watermark-anything/blob/2c08af04d037d5667c02f6ddebbda9ff04581c3e/watermark_anything/augmentation/valuemetric.py
 
-    def jpeg_single(self, image, quality):
-        return jpeg_compress(image, quality).to(image.device)
+# We omit Median filtering because it's not CUDA friendly
+# WAM implementation of median filtering: https://github.com/facebookresearch/watermark-anything/blob/main/watermark_anything/utils/image.py#L59
 
-    def forward(self, image: torch.tensor):
-        quality = torch.randint(self.min_quality, self.max_quality + 1, size = (1, )).item()
-        # image = unnormalize(image).clamp(0, 255)
-
-        if len(image.shape) == 4:  # batched compression
-            for ii in range(image.shape[0]):
-                image[ii] = self.jpeg_single(image[ii], quality)
-        else:
-            image = self.jpeg_single(image, quality)
-
-        return normalize(image)
-    
 class DiffJPEG(nn.Module):
     def __init__(self, min_quality = 40, max_quality = 90):
         super().__init__()
@@ -59,6 +43,8 @@ class DiffJPEG(nn.Module):
         
         self.DCT = nn.Parameter(torch.tensor(create_dct_matrix()), requires_grad = False)
         
+        # JPEG quantization tables, higher frequencies get quantized more aggresively.
+        # Luminance and chroma channels use separate quantization tables.
         self.QY = nn.Parameter(torch.tensor([
             [16, 11, 10, 16, 24, 40, 51, 61],
             [12, 12, 14, 19, 26, 58, 60, 55],
@@ -81,7 +67,6 @@ class DiffJPEG(nn.Module):
             [99, 99, 99, 99, 99, 99, 99,99]
         ], dtype = torch.float32), requires_grad = False)
 
-
     def rgb_2_ycbcr(self, X: torch.Tensor):
         # X => [B, C, H, W], RGB images with [0, 255] quantization?
         # Returns [B, C, H, W]
@@ -95,7 +80,7 @@ class DiffJPEG(nn.Module):
     def ycbcr_2_rgb(self, X : torch.Tensor):
         X = X.permute(0, 2, 3, 1)
         X = X - self.rgb_2_ycbcr_shift
-        X = torch.tensordot(X, self.ycbcr_2_rgb_map)
+        X = torch.tensordot(X, self.ycbcr_2_rgb_map, dims = 1)
         X = X.permute(0, 3, 1, 2)
         return X
     
@@ -108,9 +93,11 @@ class DiffJPEG(nn.Module):
         return X[:, 0], cb_subsampled, cr_subsampled
 
     def dct(self, X):
+        # For 8x8 blocks this might work better than fast DCT
         return self.DCT @ X @ self.DCT.T
 
     def idct(self, X):
+        # Same argument for iDCT
         return self.DCT.T @ X @ self.DCT
     
     def compress(self, X, quality):
@@ -158,11 +145,80 @@ class DiffJPEG(nn.Module):
         Cr = nn.functional.interpolate(Cr.unsqueeze(1), scale_factor = 2, mode = "bilinear").squeeze(1)
 
         X = torch.stack([Y, Cb, Cr], dim = 1)
-        return X
-    
+        return self.ycbcr_2_rgb(X)
+
     def forward(self, X):
+        # X [B, C, H, W], batch of images
         quality = torch.randint(self.min_quality, self.max_quality + 1, size = (1,)).item()
         B, C, H, W = X.shape
+        # TODO: JPEG requires [0, 255] quantization. This assumes that the input is always [-1, 1]?
+        # Check if the input is in satisfiable range before applying reverse transformation?
+        X = unnormalize(X) 
         Y, Cb, Cr = self.compress(X, quality)
         out = self.decompress(Y, Cb, Cr, quality, H, W)
-        return out
+        return normalize(out)
+    
+class GaussianBlur(nn.Module):
+    def __init__(self, min_kernel_size = None, max_kernel_size = None):
+        super(GaussianBlur, self).__init__()
+        self.min_kernel_size = min_kernel_size
+        self.max_kernel_size = max_kernel_size
+
+    def forward(self, image, kernel_size = None):
+        # Can operate on [-1, 1] inputs as well.
+        kernel_size = torch.randint(self.min_kernel_size, self.max_kernel_size + 1, size=(1, )).item()
+        kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size # Always use odd sized kernels
+        # Convolution with 2D Gaussian filter + reflection padding to preserve input shape.
+        image = transforms.functional.gaussian_blur(image, kernel_size)
+        return image
+
+class Brightness(nn.Module):
+    def __init__(self, min_factor = None, max_factor = None):
+        super(Brightness, self).__init__()
+        self.min_factor = min_factor
+        self.max_factor = max_factor
+
+    def forward(self, image, factor = None):
+        image = unnormalize(image) / 255.0
+        factor = torch.rand(1).item() * (self.max_factor - self.min_factor) + self.min_factor
+        image = transforms.functional.adjust_brightness(image, factor) # Returns [0, 1] range, and also expects input in the same range.
+        # Not quite in line with our [-1, 1] normalization!
+        return normalize(image * 255)
+
+class Contrast(nn.Module):
+    def __init__(self, min_factor = None, max_factor = None):
+        super(Contrast, self).__init__()
+        self.min_factor = min_factor
+        self.max_factor = max_factor
+
+    def forward(self, image, factor = None):
+        # Also expects [0, 1] inputs and returns [0, 1 outputs]
+        image = unnormalize(image) / 255.0
+        factor = torch.rand(1).item() * (self.max_factor - self.min_factor) + self.min_factor
+        image = transforms.functional.adjust_contrast(image, factor)
+        return normalize(image * 255)
+
+class Saturation(nn.Module):
+    def __init__(self, min_factor = None, max_factor = None):
+        super(Saturation, self).__init__()
+        self.min_factor = min_factor
+        self.max_factor = max_factor
+
+    def forward(self, image):
+        image = unnormalize(image) / 255.0
+        factor = torch.rand(1).item() * (self.max_factor - self.min_factor) + self.min_factor
+        image = transforms.functional.adjust_saturation(image, factor)
+        return normalize(image * 255)
+
+class Hue(nn.Module):
+    def __init__(self, min_factor = None, max_factor = None):
+        super(Hue, self).__init__()
+        assert min_factor <= max_factor and min_factor >= -0.5 and max_factor <= 0.5, f"Hue factor has to be in range [-0.5, 0.5], but [{min_factor}, {max_factor}] was given."
+        self.min_factor = min_factor
+        self.max_factor = max_factor
+
+    def forward(self, image):
+        factor = torch.rand(1).item() * (self.max_factor - self.min_factor) + self.min_factor
+        image = unnormalize(image) / 255
+        image = transforms.functional.adjust_hue(image, factor) # factor must be in range [-0.5, 0.5]
+        return normalize(image * 255)

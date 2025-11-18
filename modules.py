@@ -57,7 +57,7 @@ class JND(nn.Module):
     
     def forward(self, X):
         # X [B, 3, H, W], input is assumed to be RGB with standard [0, 255] quantization
-        L = 0.2126 * X[:, 0, :, :] + 0.7152 * X[:, 1, :, :] + 0.0722 * X[:, 2, :, :] # convert to luminance channel
+        L = 0.299 * X[:, 0, :, :] + 0.587 * X[:, 1, :, :] + 0.114 * X[:, 2, :, :] # convert to luminance channel
 
         LA = (1 / 32) * nn.functional.conv2d(L, self.luminance_kernel, padding = 2)
         LA_mask = LA <= 127

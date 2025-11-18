@@ -1,13 +1,8 @@
 import torch
 import torch.nn as nn
-import time
-import numpy as np
-import matplotlib.pyplot as plt
 
-from PIL import Image
 from torchvision import transforms
 from modules import ConvNeXtBlock, JND
-from augmentations.valuemetric import JPEG
 from utils import normalize, unnormalize
 
 class Embedder(nn.Module):
@@ -39,8 +34,6 @@ class Embedder(nn.Module):
         for i in range(num_layers):
             in_channels = out_channels
             out_channels = 2 * in_channels
-
-            print(f"{in_channels} {out_channels}")
 
             encoder_conv.append(nn.Sequential(
                 ConvNeXtBlock(in_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop),
@@ -97,6 +90,7 @@ class Embedder(nn.Module):
     def forward(self, X, messages):
         # X => [B, in_channels, H, W], RGB image with [0, 255] quantization
         # messages => [B, capacity], binary vectors
+        # Output is [B, in_channels, H, W] with [-1, 1] quantization, keep this in mind for other transformations!
         encoder_conv_out = []
         input = X
 

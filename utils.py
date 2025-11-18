@@ -11,19 +11,6 @@ def normalize(X: torch.Tensor):
 def unnormalize(X: torch.Tensor):
     return torch.clamp((X + 1) * 127.5, 0, 255)
 
-def jpeg_compress(image: torch.Tensor, quality: int) -> torch.Tensor:
-    # Adapted from: https://github.com/facebookresearch/watermark-anything/blob/main/watermark_anything/augmentation/valuemetric.py#L23
-    # assert image.min() >= 0 and image.max() <= 1, f'Image pixel values must be in the range [0, 1], got [{image.min()}, {image.max()}]'
-    pil_image = transforms.ToPILImage()(image)  # convert to PIL image
-    # Create a BytesIO object and save the PIL image as JPEG to this object
-    buffer = io.BytesIO()
-    pil_image.save(buffer, format = "JPEG", quality = quality)
-    # Load the JPEG image from the BytesIO object and convert back to a PyTorch tensor
-    buffer.seek(0)  
-    compressed_image = Image.open(buffer)
-    tensor_image = transforms.ToTensor()(compressed_image)
-    return tensor_image
-
 def diff_round(x: torch.Tensor):
     """
     Approximation to round(x) that yields sound derivatives. It can easily verified that this function is differentiable on segments 
@@ -95,3 +82,7 @@ def blocks_to_img(X, H_orig, W_orig, block = 8):
     X = nn.functional.fold(X, output_size = (Hb * 8, Wb * 8), kernel_size = (8, 8), stride = (8, 8)) # [B, C, H, W]
     X = X[:, 0, :H_orig, :W_orig] # C = 1 since this function is only called for each YCbCr channel during JPEG
     return X
+
+def psnr(X: torch.Tensor, Y: torch.Tensor):
+    # Assumes [-1, 1] normalization of inputs
+    return 10 * torch.log10(1 / ((X - Y) ** 2).mean())
