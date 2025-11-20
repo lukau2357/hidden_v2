@@ -32,15 +32,13 @@ if __name__ == "__main__":
 
     test = ImageDataset("./val2014/val2014", ["COCO_val2014_000000058651.jpg"])
     dl = torch.utils.data.DataLoader(test, batch_size = 1, shuffle=  True, collate_fn = partial(collate_fn), num_workers = 2)
-    X = next(iter(dl))
-    print(X.shape)
-    exit(0)
     start = time.time()
 
     for file in tqdm.tqdm(files):
         # image = Image.open(os.path.join("val2014", "val2014", file))
         image = cv2.imread(os.path.join("val2014", "val2014", file))
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        print(image.min(), image.max())
         # image = np.asarray(image)
         current_res = image.shape
 

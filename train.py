@@ -18,12 +18,16 @@ from sklearn.model_selection import train_test_split
 from functools import partial
 
 class LinearWarmupCosineAnnealingLR(_LRScheduler):
+    """
+    Scheduler popularized by Attention is all you need paper. Learning rate is warmed up linearly for the given number of steps first,
+    then decayed following a cosine schedule.
+    """
     def __init__(self, optimizer, warmup_steps, max_steps, eta_min = 0.0, last_epoch = -1):
         assert max_steps > warmup_steps, "max_steps must be greater than warmup_steps"
 
         self.warmup_steps = warmup_steps
         self.max_steps = max_steps
-        self.eta_min = eta_min
+        self.eta_min = eta_min # minimum achievable learning rate, will practically always be 0
 
         super().__init__(optimizer, last_epoch)
 
@@ -84,6 +88,13 @@ def deserialize_scheduler(sched_info, optimizer):
 
 def eval(loader: torch.utils.data.DataLoader, embedder: Embedder, extractor: Extractor, device: str):
     acc = []
+
+    is_embedder_train = embedder.training
+    is_extractor_train = extractor.training
+
+    embedder.eval()
+    extractor.eval()
+
     with torch.no_grad():
         loop = tqdm.tqdm(loader, total = len(loader))
 
@@ -101,6 +112,12 @@ def eval(loader: torch.utils.data.DataLoader, embedder: Embedder, extractor: Ext
                 free, total = torch.cuda.mem_get_info(device)
                 mem_used_MB = (total - free) / 1024 ** 2
                 loop.set_postfix({"GPU memory": f"{mem_used_MB :.2f} MB"})
+    
+    if is_embedder_train:
+        embedder.train()
+    
+    if is_extractor_train:
+        extractor.train()
     
     return sum(acc) / len(acc)
 
@@ -148,9 +165,11 @@ def train(embedder: Embedder,
     loss_ema_beta = train_metadata.get("loss_ema_beta")
     epochs = train_metadata.get("epochs")
 
-    loss_values = train_metadata.get("loss_values", [])
     acc_values = train_metadata.get("acc_values", [])
-    prev_loss = 0 if len(loss_values) == 0 else loss_values[-1]
+    prev_loss = train_metadata.get("prev_loss", 0)
+
+    embedder.train()
+    extractor.train()
 
     for i in range(current_epoch, epochs):
         loop = tqdm.tqdm(train_dl, total = len(train_dl), leave = True)
@@ -171,6 +190,7 @@ def train(embedder: Embedder,
             current_loss = reconstruction_loss + decoding_loss
             current_loss.backward()
             optimizer.step()
+
             if scheduler is not None:
                 scheduler.step()
 
@@ -182,8 +202,7 @@ def train(embedder: Embedder,
                 logger_dict["GPU memory"] = f"{mem_used_MB:.2f} MB"
 
             loop.set_postfix(logger_dict)
-            loss_values.append(current_loss.item())
-            prev_loss = current_loss
+            prev_loss = current_loss.item()
 
         # Eval only on validation dataset. Will not be able to see overfitting...
         print("Evaluating...")
@@ -204,7 +223,7 @@ def train(embedder: Embedder,
         # Update only the changing parameters
         train_metadata["current_epoch"] = i + 1
         train_metadata["best_acc"] = best_acc
-        train_metadata["loss_values"] = loss_values
+        train_metadata["prev_loss"] = prev_loss
         train_metadata["acc_values"] = acc_values
 
         with open(os.path.join(chck_path, "metadata.json"), "w+", encoding = "utf-8") as f:
@@ -221,11 +240,17 @@ def load_and_train(model_conf_path: str,
                    adam_betas = (0.9, 0.999),
                    create_scheduler = True,
                    warmup_ratio = 0.1,
-                   lambda_1: float = 1.0,
-                   lambda_2: float = 1.0,
+                   lambda_1: float = 0.2, # MSE scaling factor
+                   lambda_2: float = 1.0, # BCE scaling factor
                    loss_ema_beta: float = 0.1
                    ):
     
+    """
+    MSE for inputs in [-1, 1] and BCE are not on the same scale. MSE is in range [0, 4] for inputs in [-1, 1], BCE is practically unbounoded,
+    but for single class classification in the case of highest entropy we would have -ln(1 / 2) ~ 0.7. If we keep lambda_2 = 1, an attempt
+    to re-scale MSE to BCE range would be to set lambda_1 = 0.7 / 4 ~ 0.2, which is the default value.
+    """
+
     # Load model configuration
     with open(model_conf_path, "r", encoding = "utf-8") as f:
         conf = yaml.safe_load(f)
@@ -237,11 +262,6 @@ def load_and_train(model_conf_path: str,
             training_metadata = json.load(f)
     
     else:
-        '''
-            loss_ema_beta = 0.1,
-            lambda_1 = 1.0, # Weight of reconstruction loss
-            lambda_2 = 1.0  # Weight of decoding loss
-        '''
         training_metadata = {
             "loss_ema_beta": loss_ema_beta,
             "lambda_1": lambda_1,

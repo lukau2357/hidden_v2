@@ -73,7 +73,8 @@ Max resolution: (640, 640, 3)
 
 * Try data loader with pin_memory = True initially.
 * Code is not reproducible, make it reproducible!!!
-
+* Mention the idea of augmentation sapmling, both horizontally (accross augmentations) and vertically (strength parameters for a chosen augmentation). The idea is that in initial iterations the model should with high probability onlt sample identity, as training progresses it should vary different augmentations but with relatively small strength, and as training further progresses the augmentation strengths should increase as well.
+* Also suggest applying multiple augmentations, not just a single one. Combine augmentation for example is an augmentation which combines Perspective Wrap + Brightness + JPEG.
 ## TODO (Completeness)
 * Investigate previous implementation.
 * Convince yourself why DCT implementation works.

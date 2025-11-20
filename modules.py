@@ -78,6 +78,7 @@ class JND(nn.Module):
         H[:, 0] *= 0.5 
         H[:, 1] *= 0.5 
 
+        # H is roughly in [0, 255] range, and we want a heatmap for modulation, so we keep values in [0, 1] roughly.
         return H / 255 # [B, 3, H, W]
     
 class ConvNeXtLayerNorm(nn.Module):
