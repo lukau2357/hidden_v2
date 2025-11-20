@@ -21,6 +21,16 @@ class Embedder(nn.Module):
 
         self.capacity = capacity
         self.true_resolution = true_resolution
+        self.in_channels = in_channels
+        self.base_channels = base_channels
+        self.num_layers = num_layers
+        self.expansion = expansion
+        self.cnext_ls = cnext_ls
+        self.cnext_drop = cnext_drop
+        self.jnd_alpha = jnd_alpha
+        self.jnd_gamma = jnd_gamma
+        self.jnd_eps = jnd_eps
+
         self.bottleneck_res = self.true_resolution // 2 ** num_layers
         self.jnd_alpha = jnd_alpha
         initial_channels = in_channels
@@ -142,6 +152,29 @@ class Embedder(nn.Module):
         # JND on the other hand has to use an input image with quantization [0, 255]!
         return input_norm + self.jnd_alpha * jnd_attn * X # MaskMark does jnd_attn (X - input), is that better?
     
+    def to_dict(self):
+        return {
+            "args": {
+                "capacity": self.capacity,
+                "in_channels": self.in_channels,
+                "base_channels": self.base_channels,
+                "num_layers": self.num_layers,
+                "expansion": self.expansion,
+                "cnext_ls": self.cnext_ls,
+                "cnext_drop": self.cnext_drop,
+                "jnd_alpha": self.jnd_alpha,
+                "jnd_gamma": self.jnd_gamma,
+                "jnd_eps": self.jnd_eps,
+            },
+            "state_dict": self.state_dict()
+        }
+
+    @classmethod
+    def load(cls, d):
+        res = cls(**d["args"])
+        res.load_state_dict(d["state_dict"])
+        return res
+
 class Extractor(nn.Module):
     """
     Follows original ConvNeXt, in fact any given model in that paper can be constructed by giving appropriate channel_muls, base_channels and blocks 
@@ -158,6 +191,16 @@ class Extractor(nn.Module):
                  cnext_drop = 0.1):
     
         super().__init__()
+
+        self.capacity = capacity
+        self.channel_muls = channel_muls
+        self.blocks = blocks
+        self.true_resolution = true_resolution
+        self.in_channels = in_channels
+        self.base_channels = base_channels
+        self.expansion = expansion
+        self.cnext_ls = cnext_ls
+        self.cnext_drop = cnext_drop
 
         self.stem = nn.Sequential(nn.Conv2d(in_channels, base_channels, kernel_size = 4, stride = 4), ConvNeXtLayerNorm(base_channels))
         modules = []
@@ -198,3 +241,25 @@ class Extractor(nn.Module):
         X = self.last_ln(X)
         X = self.pred_linear(X)
         return X
+    
+    def to_dict(self):
+        return {
+            "args": {
+                "capacity": self.capacity,
+                "channel_muls": self.channel_muls,
+                "blocks": self.blocks,
+                "true_resolution": self.true_resolution,
+                "in_channels": self.in_channels,
+                "base_channels": self.base_channels,
+                "expansion": self.expansion,
+                "cnext_ls": self.cnext_ls,
+                "cnext_drop": self.cnext_drop
+            },
+            "state_dict": self.state_dict()
+        }
+    
+    @classmethod
+    def load(cls, d):
+        res = cls(**d["args"])
+        res.load_state_dict(d["state_dict"])
+        return res

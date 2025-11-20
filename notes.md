@@ -64,6 +64,16 @@ def bilinear_resize(image, scale):
     return out.astype(image.dtype)
 ```
 
+* Will use val2014 for training, CBA. 40k images, do an 80/20 split, or 90/10. Full training on the other hand has 81k images, out of scope for the time given for the implementation. COCO val2014 resolution stats:
+```
+Iteration time: 147.18680095672607 s.
+Min resolution: (120, 120, 3)
+Max resolution: (640, 640, 3)
+```
+
+* Try data loader with pin_memory = True initially.
+* Code is not reproducible, make it reproducible!!!
+
 ## TODO (Completeness)
 * Investigate previous implementation.
 * Convince yourself why DCT implementation works.

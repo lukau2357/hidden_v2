@@ -2,6 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+import cv2
 
 from augmentations.valuemetric import DiffJPEG, Hue, GaussianBlur, Contrast, Brightness, Saturation
 from augmentations.geometric import Combine, Rotate, Crop
@@ -12,12 +13,14 @@ from PIL import Image
 from torchvision.transforms import Resize
 from utils import normalize, unnormalize, psnr
 from augmentations.augmenter import Augmenter
+from dataset import ImageDataset
 
 if __name__ == "__main__":
     device = "cuda"
-    image_orig = Image.open("./val2014/val2014/COCO_val2014_000000000074.jpg")
-    image_orig = np.asarray(image_orig)
-
+    # image_orig = Image.open("./val2014/val2014/COCO_val2014_000000000074.jpg")
+    # image_orig = np.asarray(image_orig)
+    image_orig = cv2.imread("./val2014/val2014/COCO_val2014_000000000074.jpg")
+    image_orig = cv2.cvtColor(image_orig, cv2.COLOR_BGR2RGB)
     with open("./model_configurations/base.yaml", encoding = "utf-8") as f:
         conf = yaml.safe_load(f)
 
@@ -28,7 +31,6 @@ if __name__ == "__main__":
     model = Embedder(**conf["embedder"]).to(device)
     test = Augmenter(conf["augmentations"]["train"]).to(device)
     extractor = Extractor(**conf["extractor"]).to(device)
-    exit(0)
 
     params = 0
     for param in model.parameters():

@@ -24,7 +24,8 @@ class Augmenter(nn.Module):
             "Rotate": Rotate,
             "Combine": Combine,
             "PixelSplicing": PixelSplicing,
-            "BoxSplicing": BoxSplicing
+            "BoxSplicing": BoxSplicing,
+            "Identity": nn.Identity
         }
 
         def _parse_conf(conf):
@@ -44,9 +45,7 @@ class Augmenter(nn.Module):
         # Applies a randomly sampled augmentation to the input batch of images
         # Output range is also [-1, 1]
         aug_index = torch.multinomial(self.selection_probabilities, 1).item()
-
-        print(f"Applying augmentation: {self.augmentations[aug_index].__class__}")
-
+        # print(f"Applying augmentation: {self.augmentations[aug_index].__class__}")
         # For splicing operations, we combine the original and watermarked images.
         if isinstance(self.augmentations[aug_index], PixelSplicing) or isinstance(self.augmentations[aug_index], BoxSplicing):
             return self.augmentations[aug_index](X, X_wm)
