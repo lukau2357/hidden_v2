@@ -43,7 +43,7 @@ if __name__ == "__main__":
         if param.requires_grad:
             params += param.numel()
         
-    test = Augmenter(conf["augmentations"]["train"]).to(device)
+    test = Augmenter(**conf["augmentations_train"]).to(device)
     extractor = Extractor(**conf["extractor"]).to(device)
 
     params = 0
@@ -56,8 +56,7 @@ if __name__ == "__main__":
     X_wm = model(X, message).clamp(-1, 1)
     
     X = normalize(X)
-    
-    X_ed = test(X, X_wm)
+    X_ed = test(X, X_wm, train_steps = 40000)
     
     params = 0
     for param in extractor.parameters():

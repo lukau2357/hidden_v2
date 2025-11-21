@@ -17,8 +17,76 @@ extractor:
   blocks: [3, 3, 9, 3]
   cnext_drop: 0.05
 
-augmentations:
-  train:
+augmentations_train:
+  max_steps_ratio: 0.2
+  id_start_prob: 0.95
+  
+  aug_strength:
+    DiffJPEG:
+      min_quality: 40
+      max_quality: 80
+    
+    GaussianBlur:
+      min_kernel_size: 3
+      max_kernel_size: 17
+    
+    Brightness:
+      min_factor: 0.5
+      max_factor: 2
+    
+    Contrast:
+      min_factor: 0.5
+      max_factor: 2
+    
+    Saturation:
+      min_factor: 0.5
+      max_factor: 2
+    
+    Hue:
+      min_factor: -0.1
+      max_factor: 0.1
+    
+    Rotate:
+      min_angle: -10
+      max_angle: 10
+    
+    Resize:
+      min_size: 0.5
+      max_size: 1.5
+    
+    Crop:
+      min_size: 0.33
+      max_size: 1
+    
+    Perspective:
+      min_distortion_scale: 0.1
+      max_distortion_scale: 0.5
+    
+    HorizontalFlip:
+      # No parameters
+
+    Identity:
+      # No parameters
+
+    Combine:
+      min_quality: 40
+      max_quality: 80
+      min_brightness_factor: 0.5
+      max_brightness_factor: 2
+      min_distortion_scale: 0.1
+      max_distortion_scale: 0.5
+    
+    PixelSplicing:
+      min_p: 0.05
+      max_p: 0.35
+    
+    BoxSplicing:
+      min_size: 0.1
+      max_size: 0.7
+
+# For each augmentation type, specify strength parameters for separate evaluation
+augmentations_eval:
+  aug_strength:
     DiffJPEG:
       min_quality: 40
       max_quality: 80

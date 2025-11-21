@@ -106,6 +106,7 @@ def eval(loader: torch.utils.data.DataLoader, embedder: Embedder, extractor: Ext
             B = X.shape[0]
             messages = (torch.rand(B, embedder.capacity, device = device) >= 0.5).to(torch.int32) # [B, capacity]
             X_w = embedder(X, messages)
+
             messages_logits = extractor(X_w)
             messages_logits = (messages_logits >= 0).to(torch.int32)
 
@@ -132,6 +133,7 @@ def state_checkpoint(epoch: int,
                      eval_acc: float, 
                      embedder: Embedder, 
                      extractor: Extractor, 
+                     augmenter: Augmenter,
                      optimizer: torch.optim.Optimizer, 
                      lr_scheduler: LinearWarmupCosineAnnealingLR,
                      checkpoint_dir: str,
@@ -141,7 +143,8 @@ def state_checkpoint(epoch: int,
         "eval_acc": eval_acc,
         "embedder": embedder.to_dict(),
         "extractor": extractor.to_dict(),
-        "optimizer": serialize_optimizer(optimizer)
+        "optimizer": serialize_optimizer(optimizer),
+        "augmenter": augmenter.to_dict()
     }
 
     if lr_scheduler is not None:
@@ -179,7 +182,8 @@ def train(embedder: Embedder,
 
     embedder.train()
     extractor.train()
-
+    train_steps = len(train_dl) * epochs
+    
     for i in range(current_epoch, epochs):
         loop = tqdm.tqdm(train_dl, total = len(train_dl), leave = True)
         loop.set_description(f"Epoch [{i + 1} / {epochs}]")
@@ -191,7 +195,7 @@ def train(embedder: Embedder,
             B = X.shape[0]
             messages = (torch.rand(B, embedder.capacity, device = device) >= 0.5).to(torch.int32) # [B, capacity]
             X_w = embedder(X, messages) # [B, C, H, W], [-1, 1] quantization
-            X_wa = augmenter(normalize(X), X_w)
+            X_wa = augmenter(normalize(X), X_w, train_steps = train_steps)
             messages_logits = extractor(X_wa) # [B, capacity]
 
             reconstruction_loss = lambda_1 * ((normalize(X) - X_w) ** 2).mean()
@@ -226,16 +230,16 @@ def train(embedder: Embedder,
         acc_values.append(current_acc)
         psnr_values.append(current_psnr)
 
-        print(f"Epoch {i + 1} validation message recovery accuracy: {current_acc}")
-        print(f"Epoch {i + 1} validation imperceptibility: {current_psnr} dB")
+        print(f"Epoch {i + 1} validation message recovery accuracy: {current_acc :.4f}")
+        print(f"Epoch {i + 1} validation imperceptibility: {current_psnr :.4f} dB")
 
         if current_acc > best_acc:
             best_acc = current_acc
             print("Creating the checkpoint for new best accuracy.")
-            state_checkpoint(i + 1, best_acc, embedder, extractor, optimizer, scheduler, chck_path, "best.pt")
+            state_checkpoint(i + 1, best_acc, embedder, extractor, augmenter, optimizer, scheduler, chck_path, "best.pt")
         
         print("Creating the checkpoint for the last epoch.")
-        state_checkpoint(i + 1, best_acc, embedder, extractor, optimizer, scheduler, chck_path, "last.pt")
+        state_checkpoint(i + 1, best_acc, embedder, extractor, augmenter, optimizer, scheduler, chck_path, "last.pt")
 
         print("Saving training metadata.")
 
@@ -260,7 +264,7 @@ def load_and_train(model_conf_path: str,
                    learning_rate: float = 3e-4,
                    adam_betas = (0.9, 0.999),
                    create_scheduler = True,
-                   warmup_ratio = 0.1,
+                   warmup_ratio = 0.2,
                    lambda_1: float = 0.25, # MSE scaling factor
                    lambda_2: float = 1.0, # BCE scaling factor
                    loss_ema_beta: float = 0.9
@@ -273,6 +277,9 @@ def load_and_train(model_conf_path: str,
 
     If we for decoding loss use MSE instead, then we should bring MSE of image reconstruction to [0, 1] by scaling with 0.25, since it's in range
     [0, 4] otherwise.
+
+    It seems that by keeping lambda2 fixed to 1 and decreasing lambda1 the model consistently sacrifices imperceptibility for increase in decoding
+    accuracy, we do not want that, we want to optimize both criteria smoothly, try with 1, 1 schedule?
     """
 
     # Load model configuration
@@ -298,7 +305,10 @@ def load_and_train(model_conf_path: str,
             "best_acc": 0,
             "batch_size": batch_size,
             "train_ratio": train_ratio,
-            "data_generation_seed": data_generation_seed
+            "data_generation_seed": data_generation_seed,
+            "uses_lr_scheduler": create_scheduler,
+            "aug_linear_steps_ratio": conf["augmentations_train"].get("max_steps_ratio"),
+            "id_start_prob": conf["augmentations_train"].get("id_start_prob")
         }
 
     image_files = os.listdir(data_root_path)
@@ -323,20 +333,21 @@ def load_and_train(model_conf_path: str,
                                           # collate_fn = partial(collate_fn, target_resolution = conf["embedder"]["true_resolution"]),
                                           pin_memory = True)
 
-    augmenter = Augmenter(conf["augmentations"]["train"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    augmenter = augmenter.to(device)
 
     if not os.path.exists(chck_path):
         os.mkdir(chck_path)
     
     last_path = os.path.join(chck_path, "last.pt")
     if os.path.exists(last_path):
-        d = torch.load(last_path, weights_only = True)
+        d = torch.load(last_path)
         embedder = Embedder.load(d["embedder"])
         extractor = Extractor.load(d["extractor"])
+        augmenter = Augmenter.load(d["augmenter"])
+
         embedder = embedder.to(device)
         extractor = extractor.to(device)
+        augmenter = augmenter.to(device)
 
         optimizer = deserialize_optimizer(d["optimizer"], chain(embedder.parameters(), extractor.parameters()))
         lr_scheduler = None
@@ -347,8 +358,11 @@ def load_and_train(model_conf_path: str,
     else:
         embedder = Embedder(**conf["embedder"])
         extractor = Extractor(**conf["extractor"])
+        augmenter = Augmenter(**conf["augmentations_train"])
+
         embedder = embedder.to(device)
         extractor = extractor.to(device)
+        augmenter = augmenter.to(device)
 
         # Default to using Adam for now...
         optimizer = torch.optim.Adam(chain(embedder.parameters(), extractor.parameters()), lr = learning_rate, betas = adam_betas)
@@ -385,4 +399,5 @@ if __name__ == "__main__":
     load_and_train(model_conf_path, data_root_path, checkpoint_path, 
                    batch_size = batch_size, 
                    create_scheduler = True,
-                   data_generation_seed = seed)
+                   data_generation_seed = seed,
+                   epochs = 50)
