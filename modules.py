@@ -94,3 +94,60 @@ class ConvNeXtLayerNorm(nn.Module):
         X = self.ln(X)
         X = X.permute(0, 3, 1, 2) # [B, C, H, W]
         return X
+    
+class MobileNetV2Block(nn.Module):
+    """
+    Try MobileNetV2 blocks instead of ConvNeXt blocks in embedder?
+    """
+    def __init__(self, in_channels, out_channels, stride = 1, expansion = 6):
+        super().__init__()
+        assert stride in [1, 2], f"Stride for depthwise convolution must be either 1 or 2, but {stride} given."
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.stride = stride
+        self.expansion = expansion
+        hidden_dim = int(in_channels * expansion)
+        # Residual connection without layer scale and stochastic drop path.
+        # Residual connection is used iff in_channels == out_channels and stride == 1 (no downsampling in depthwise block)
+        self.use_res_connect = (stride == 1 and in_channels == out_channels)
+
+        layers = []
+
+        # Expansion (1x1 conv)
+        if expansion != 1:
+            layers += [
+                nn.Conv2d(in_channels, hidden_dim, kernel_size = 1 , bias = False),
+                nn.BatchNorm2d(hidden_dim),
+                nn.GELU()
+            ]
+
+        # Depthwise 3x3 conv
+        layers += [
+            nn.Conv2d(
+                hidden_dim,
+                hidden_dim,
+                kernel_size = 3,
+                stride = stride,
+                padding = 1,
+                groups = hidden_dim,
+                bias = False,
+            ),
+            nn.BatchNorm2d(hidden_dim),
+            nn.GELU()            
+        ]
+
+        # Projection (1x1 conv)
+        layers += [
+            nn.Conv2d(hidden_dim, out_channels, kernel_size = 1, bias = False),
+            nn.BatchNorm2d(out_channels),
+        ]
+
+        self.conv = nn.Sequential(*layers)
+
+    def forward(self, x):
+        if self.use_res_connect:
+            return x + self.conv(x)
+        
+        else:
+            return self.conv(x)

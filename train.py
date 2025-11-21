@@ -6,14 +6,16 @@ import tqdm
 import torch.nn.functional as F
 import json
 import yaml
+import numpy as np
+import torch
 
 from itertools import chain
 from torch.optim.lr_scheduler import _LRScheduler
-from utils import normalize, unnormalize
+from utils import normalize, unnormalize, psnr
 from model import Embedder, Extractor
 from augmentations.augmenter import Augmenter
 from typing import Union
-from dataset import ImageDataset, collate_fn
+from dataset import ImageDataset
 from sklearn.model_selection import train_test_split
 from functools import partial
 
@@ -87,7 +89,8 @@ def deserialize_scheduler(sched_info, optimizer):
     return scheduler
 
 def eval(loader: torch.utils.data.DataLoader, embedder: Embedder, extractor: Extractor, device: str):
-    acc = []
+    acc = np.array([])
+    psnrs = np.array([])
 
     is_embedder_train = embedder.training
     is_extractor_train = extractor.training
@@ -106,8 +109,12 @@ def eval(loader: torch.utils.data.DataLoader, embedder: Embedder, extractor: Ext
             messages_logits = extractor(X_w)
             messages_logits = (messages_logits >= 0).to(torch.int32)
 
-            current_acc = (messages == messages_logits).sum().item()
-            acc.append(current_acc)
+            current_acc = (messages == messages_logits).to(torch.float32).mean(dim = -1).cpu().numpy()
+            acc = np.concatenate((acc, current_acc))
+
+            current_psnr = psnr(X, unnormalize(X_w), max_value = 255.0).cpu().numpy()
+            psnrs = np.concatenate((psnrs, current_psnr))
+
             if "cuda" in device:
                 free, total = torch.cuda.mem_get_info(device)
                 mem_used_MB = (total - free) / 1024 ** 2
@@ -119,7 +126,7 @@ def eval(loader: torch.utils.data.DataLoader, embedder: Embedder, extractor: Ext
     if is_extractor_train:
         extractor.train()
     
-    return sum(acc) / len(acc)
+    return acc.mean(), psnrs.mean()
 
 def state_checkpoint(epoch: int, 
                      eval_acc: float, 
@@ -162,11 +169,13 @@ def train(embedder: Embedder,
     lambda_1 = train_metadata.get("lambda_1")
     lambda_2 = train_metadata.get("lambda_2")
     best_acc = train_metadata.get("best_acc")
-    loss_ema_beta = train_metadata.get("loss_ema_beta")
+    loss_ema_beta = train_metadata.get("loss_ema_beta") # Rough number of aggregated loss values for logging is 1 / (1  loss_ema_beta)
     epochs = train_metadata.get("epochs")
 
     acc_values = train_metadata.get("acc_values", [])
-    prev_loss = train_metadata.get("prev_loss", 0)
+    psnr_values = train_metadata.get("psnr_values", [])
+    prev_recon = train_metadata.get("prev_recon", 0)
+    prev_decoding = train_metadata.get("prev_decoding", 0)
 
     embedder.train()
     extractor.train()
@@ -175,7 +184,7 @@ def train(embedder: Embedder,
         loop = tqdm.tqdm(train_dl, total = len(train_dl), leave = True)
         loop.set_description(f"Epoch [{i + 1} / {epochs}]")
 
-        for j, X in enumerate(loop):
+        for X in loop:
             # X [B, C, H, W], [0, 255] quantization
             X = X.to(device)
             optimizer.zero_grad()
@@ -186,7 +195,8 @@ def train(embedder: Embedder,
             messages_logits = extractor(X_wa) # [B, capacity]
 
             reconstruction_loss = lambda_1 * ((normalize(X) - X_w) ** 2).mean()
-            decoding_loss = lambda_2 * (F.binary_cross_entropy_with_logits(messages_logits, messages.to(torch.float32)))
+            # decoding_loss = lambda_2 * (F.binary_cross_entropy_with_logits(messages_logits, messages))
+            decoding_loss = lambda_2 * ((torch.nn.functional.sigmoid(messages_logits) - messages.to(torch.float32)) ** 2).mean() # Try MSE instead...
             current_loss = reconstruction_loss + decoding_loss
             current_loss.backward()
             optimizer.step()
@@ -194,22 +204,31 @@ def train(embedder: Embedder,
             if scheduler is not None:
                 scheduler.step()
 
-            current_loss = current_loss * (1 - loss_ema_beta) + loss_ema_beta * prev_loss
-            logger_dict = {"Loss": f"{current_loss:.4f}"}
+            current_recon = reconstruction_loss.detach().item()
+            current_recon = (1 - loss_ema_beta) * current_recon + loss_ema_beta * prev_recon
+            current_decoding = decoding_loss.detach().item()
+            current_decoding = (1 - loss_ema_beta) * current_decoding + loss_ema_beta * prev_decoding
+
+            logger_dict = {"Recon. loss": f"{current_recon:.4f}", "Decod. loss": f"{current_decoding:.4f}"}
             if "cuda" in device:
                 free, total = torch.cuda.mem_get_info(device)
                 mem_used_MB = (total - free) / 1024 ** 2
                 logger_dict["GPU memory"] = f"{mem_used_MB:.2f} MB"
 
             loop.set_postfix(logger_dict)
-            prev_loss = current_loss.item()
+            
+            prev_recon = current_recon
+            prev_decoding = current_decoding
 
         # Eval only on validation dataset. Will not be able to see overfitting...
         print("Evaluating...")
-        current_acc = eval(eval_dl, embedder, extractor, device)
+        current_acc, current_psnr = eval(eval_dl, embedder, extractor, device)
         acc_values.append(current_acc)
+        psnr_values.append(current_psnr)
 
         print(f"Epoch {i + 1} validation message recovery accuracy: {current_acc}")
+        print(f"Epoch {i + 1} validation imperceptibility: {current_psnr} dB")
+
         if current_acc > best_acc:
             best_acc = current_acc
             print("Creating the checkpoint for new best accuracy.")
@@ -223,8 +242,10 @@ def train(embedder: Embedder,
         # Update only the changing parameters
         train_metadata["current_epoch"] = i + 1
         train_metadata["best_acc"] = best_acc
-        train_metadata["prev_loss"] = prev_loss
+        train_metadata["prev_recon"] = prev_recon
+        train_metadata["prev_decoding"] = prev_decoding
         train_metadata["acc_values"] = acc_values
+        train_metadata["psnr_values"] = psnr_values
 
         with open(os.path.join(chck_path, "metadata.json"), "w+", encoding = "utf-8") as f:
             json.dump(train_metadata, f, indent = 4)
@@ -240,15 +261,18 @@ def load_and_train(model_conf_path: str,
                    adam_betas = (0.9, 0.999),
                    create_scheduler = True,
                    warmup_ratio = 0.1,
-                   lambda_1: float = 0.2, # MSE scaling factor
+                   lambda_1: float = 0.25, # MSE scaling factor
                    lambda_2: float = 1.0, # BCE scaling factor
-                   loss_ema_beta: float = 0.1
+                   loss_ema_beta: float = 0.9
                    ):
     
     """
     MSE for inputs in [-1, 1] and BCE are not on the same scale. MSE is in range [0, 4] for inputs in [-1, 1], BCE is practically unbounoded,
     but for single class classification in the case of highest entropy we would have -ln(1 / 2) ~ 0.7. If we keep lambda_2 = 1, an attempt
     to re-scale MSE to BCE range would be to set lambda_1 = 0.7 / 4 ~ 0.2, which is the default value.
+
+    If we for decoding loss use MSE instead, then we should bring MSE of image reconstruction to [0, 1] by scaling with 0.25, since it's in range
+    [0, 4] otherwise.
     """
 
     # Load model configuration
@@ -280,23 +304,23 @@ def load_and_train(model_conf_path: str,
     image_files = os.listdir(data_root_path)
     train_files, eval_files = train_test_split(image_files, train_size = training_metadata["train_ratio"], random_state = training_metadata["data_generation_seed"])
 
-    train_dataset = ImageDataset(data_root_path, train_files)
-    eval_dataset = ImageDataset(data_root_path, eval_files)
+    train_dataset = ImageDataset(data_root_path, train_files, conf["embedder"]["true_resolution"])
+    eval_dataset = ImageDataset(data_root_path, eval_files, conf["embedder"]["true_resolution"])
 
-    train_dataset.images = train_dataset.images[:100]
-    eval_dataset.images = eval_dataset.images[:100]
+    # train_dataset.images = train_dataset.images[:100]
+    # eval_dataset.images = eval_dataset.images[:100]
 
     train_dl = torch.utils.data.DataLoader(train_dataset, batch_size = training_metadata["batch_size"], 
                                            shuffle = True, 
                                            num_workers = 2,
-                                           collate_fn = partial(collate_fn, target_resolution = conf["embedder"]["true_resolution"]),
+                                           # collate_fn = partial(collate_fn, target_resolution = conf["embedder"]["true_resolution"]),
                                            pin_memory = True,
                                            )
     
     eval_dl = torch.utils.data.DataLoader(eval_dataset, batch_size = training_metadata["batch_size"], 
                                           shuffle = True, 
                                           num_workers = 2,
-                                          collate_fn = partial(collate_fn, target_resolution = conf["embedder"]["true_resolution"]),
+                                          # collate_fn = partial(collate_fn, target_resolution = conf["embedder"]["true_resolution"]),
                                           pin_memory = True)
 
     augmenter = Augmenter(conf["augmentations"]["train"])
@@ -326,6 +350,7 @@ def load_and_train(model_conf_path: str,
         embedder = embedder.to(device)
         extractor = extractor.to(device)
 
+        # Default to using Adam for now...
         optimizer = torch.optim.Adam(chain(embedder.parameters(), extractor.parameters()), lr = learning_rate, betas = adam_betas)
         lr_scheduler = None
 
@@ -333,11 +358,31 @@ def load_and_train(model_conf_path: str,
             num_steps = epochs * len(train_dl)
             lr_scheduler = LinearWarmupCosineAnnealingLR(optimizer, warmup_steps = int(warmup_ratio * num_steps), max_steps = num_steps)
     
+    embedder_params, extractor_params = 0, 0
+
+    for param in embedder.parameters():
+        if param.requires_grad:
+            embedder_params += param.numel()
+    
+    for param in extractor.parameters():
+        if param.requires_grad:
+            extractor_params += param.numel()
+    
+    print(f"Embedder number of parameters: {embedder_params / 1e6 :.2f} M")
+    print(f"Extractor number of parameters: {extractor_params / 1e6 :.2f} M")
     train(embedder, extractor, augmenter, optimizer, lr_scheduler, chck_path, train_dl, eval_dl, device, training_metadata)
 
 if __name__ == "__main__":
     data_root_path = os.path.join("val2014", "val2014")
-    batch_size = 4
+    batch_size = 8
     model_conf_path = os.path.join("model_configurations", "base.yaml")
     checkpoint_path = "./first_checkpoint"
-    load_and_train(model_conf_path, data_root_path, checkpoint_path, batch_size = batch_size, create_scheduler = False)
+
+    # TODO: Reproducibility guaranteed ONLY IF TRAINING IS NOT INTERRPUTED!
+    seed = 41
+    torch.manual_seed(seed)
+
+    load_and_train(model_conf_path, data_root_path, checkpoint_path, 
+                   batch_size = batch_size, 
+                   create_scheduler = True,
+                   data_generation_seed = seed)

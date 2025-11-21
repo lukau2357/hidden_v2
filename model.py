@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from torchvision import transforms
-from modules import ConvNeXtBlock, JND, ConvNeXtLayerNorm
+from modules import ConvNeXtBlock, JND, ConvNeXtLayerNorm, MobileNetV2Block
 from utils import normalize, unnormalize
 
 class Embedder(nn.Module):
@@ -16,7 +16,8 @@ class Embedder(nn.Module):
                  cnext_drop = 0.1,
                  jnd_alpha = 1.0,
                  jnd_gamma = 0.3,
-                 jnd_eps = 1e-6):
+                 jnd_eps = 1e-6,
+                 conv_next_blocks = True):
         super().__init__()
 
         self.capacity = capacity
@@ -30,6 +31,8 @@ class Embedder(nn.Module):
         self.jnd_alpha = jnd_alpha
         self.jnd_gamma = jnd_gamma
         self.jnd_eps = jnd_eps
+        # Either use ConvNeXt blocks or MobileNetV2 blocks
+        self.conv_next_blocks = conv_next_blocks
 
         self.bottleneck_res = self.true_resolution // 2 ** num_layers
         self.jnd_alpha = jnd_alpha
@@ -43,20 +46,30 @@ class Embedder(nn.Module):
         for i in range(num_layers):
             in_channels = out_channels
             out_channels = 2 * in_channels
+            
+            current_ops = ([ConvNeXtBlock(in_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop),
+                           ConvNeXtBlock(in_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop)] 
+                           if conv_next_blocks
+                           else 
+                           [MobileNetV2Block(in_channels, in_channels, stride = 1), 
+                            MobileNetV2Block(in_channels, in_channels, stride = 1)])
+            
+            encoder_conv.append(nn.Sequential(*current_ops))
 
-            encoder_conv.append(nn.Sequential(
-                ConvNeXtBlock(in_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop),
-                ConvNeXtBlock(in_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop),
-            ))
-            encoder_down.append(nn.Conv2d(in_channels, out_channels, kernel_size = 2, stride = 2))
+            current_op = nn.Conv2d(in_channels, out_channels, kernel_size = 2, stride = 2) if conv_next_blocks else nn.Conv2d(in_channels, out_channels, kernel_size = 2, stride = 2)
+            encoder_down.append(current_op)
 
         self.encoder_conv = nn.ModuleList(encoder_conv)
         self.encoder_down = nn.ModuleList(encoder_down)
 
-        self.bottleneck = nn.Sequential(
-            ConvNeXtBlock(out_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop),
-            ConvNeXtBlock(out_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop)
-        )
+        current_ops = ([ConvNeXtBlock(out_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop),
+                        ConvNeXtBlock(out_channels, expansion = expansion, layer_scale_init = cnext_ls, drop_prob = cnext_drop)] 
+                        if conv_next_blocks
+                        else 
+                        [MobileNetV2Block(out_channels, out_channels, stride = 1),
+                         MobileNetV2Block(out_channels, out_channels, stride = 1)])
+
+        self.bottleneck = nn.Sequential(*current_ops)
 
         # TODO: Parametrize length of bit embeddings as well?
         # For now, set dimension of a single message embedding to 2 * capacity
@@ -76,10 +89,16 @@ class Embedder(nn.Module):
                 nn.Conv2d(prev_decoder_out, prev_encoder_out, kernel_size = 1)
             ))
 
+            current_ops = ([ConvNeXtBlock(prev_encoder_out, expansion = expansion),
+                            ConvNeXtBlock(prev_encoder_out, expansion = expansion)] 
+                            if conv_next_blocks
+                            else 
+                            [MobileNetV2Block(prev_encoder_out, prev_encoder_out, stride = 1),
+                             MobileNetV2Block(prev_encoder_out, prev_encoder_out, stride = 1)])
+
             decoder_conv.append(nn.Sequential(
                 nn.Conv2d(new_input, prev_encoder_out, kernel_size = 1),
-                ConvNeXtBlock(prev_encoder_out, expansion = expansion),
-                ConvNeXtBlock(prev_encoder_out, expansion = expansion)
+                *current_ops
             ))
 
             prev_decoder_out = prev_encoder_out

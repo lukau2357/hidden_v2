@@ -83,6 +83,10 @@ def blocks_to_img(X, H_orig, W_orig, block = 8):
     X = X[:, 0, :H_orig, :W_orig] # C = 1 since this function is only called for each YCbCr channel during JPEG
     return X
 
-def psnr(X: torch.Tensor, Y: torch.Tensor):
-    # Assumes [-1, 1] normalization of inputs
-    return 10 * torch.log10(1 / ((X - Y) ** 2).mean())
+def psnr(X: torch.Tensor, Y: torch.Tensor, max_value : float =  255.0):
+    max_value = max_value ** 2
+    B = X.shape[0]
+    X = X.reshape((B, -1))
+    Y = Y.reshape((B, -1))
+    mse = ((X - Y) ** 2).mean(dim = -1)
+    return 10 * torch.log10(max_value / mse)

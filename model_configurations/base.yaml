@@ -4,17 +4,18 @@
 embedder:
   capacity: 32
   num_layers: 3
-  true_resolution: 256
+  true_resolution: 128
   # Embedder is much shallower compared to extractor, try turning off StochasticPath for embedder
   cnext_drop: 0
+  base_channels: 32
 
 extractor:
   # Equivalent to ConvNeXt-T (T = Tiny)
   capacity: 32
-  true_resolution: 256
+  true_resolution: 128
   channel_muls: [1, 2, 4, 8]
   blocks: [3, 3, 9, 3]
-  cnext_drop: 0.1
+  cnext_drop: 0.05
 
 augmentations:
   train:

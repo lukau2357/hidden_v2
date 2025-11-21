@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 import cv2
+import time
 
 from augmentations.valuemetric import DiffJPEG, Hue, GaussianBlur, Contrast, Brightness, Saturation
 from augmentations.geometric import Combine, Rotate, Crop
@@ -11,7 +12,7 @@ from augmentations.splicing import PixelSplicing, BoxSplicing
 from model import Embedder, Extractor
 from modules import JND
 from PIL import Image
-from torchvision.transforms import Resize
+from torchvision import transforms
 from utils import normalize, unnormalize, psnr
 from augmentations.augmenter import Augmenter
 from dataset import ImageDataset
@@ -19,17 +20,29 @@ from dataset import ImageDataset
 if __name__ == "__main__":
     device = "cuda"
     # image_orig = Image.open("./val2014/val2014/COCO_val2014_000000000074.jpg")
-    # image_orig = np.asarray(image_orig)
-    image_orig = cv2.imread("./val2014/val2014/COCO_val2014_000000000074.jpg")
-    image_orig = cv2.cvtColor(image_orig, cv2.COLOR_BGR2RGB)
+    image_orig = Image.open("./test_images/lena.jpg")
+    # image_orig = cv2.imread("./val2014/val2014/COCO_val2014_000000000074.jpg")
+    # image_orig = cv2.cvtColor(image_orig, cv2.COLOR_BGR2RGB)
     with open("./model_configurations/base.yaml", encoding = "utf-8") as f:
         conf = yaml.safe_load(f)
 
-    X = torch.tensor(image_orig.transpose((2, 0, 1)), device = device, dtype = torch.float32).unsqueeze(0)
-    r = Resize((256, 256))
-    X = r(X)
+    # X = torch.tensor(image_orig.transpose((2, 0, 1)), device = device, dtype = torch.float32).unsqueeze(0)
+    tr = conf["embedder"]["true_resolution"]
+
+    transform = transforms.Compose([
+            transforms.RandomResizedCrop(size = (128, 128), scale = (0.5, 1)),
+            transforms.ToTensor()
+        ])
+
+    X = transform(image_orig).unsqueeze(0).to(device) * 255.0
 
     model = Embedder(**conf["embedder"]).to(device)
+    params = 0
+
+    for param in model.parameters():
+        if param.requires_grad:
+            params += param.numel()
+        
     test = Augmenter(conf["augmentations"]["train"]).to(device)
     extractor = Extractor(**conf["extractor"]).to(device)
 
@@ -61,7 +74,7 @@ if __name__ == "__main__":
     print(X.shape)
     print(X_ed.shape)
 
-    X_ed = model.jnd(X) * 255
+    # X_ed = model.jnd(X) * 255
     X = X.cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
     X_ed = X_ed.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
 
@@ -70,6 +83,9 @@ if __name__ == "__main__":
     ax[1].imshow(X_ed)
     ax[0].set_axis_off()
     ax[1].set_axis_off()
+
+    ax[0].set_title("Original image")
+    ax[1].set_title(f"JND with $\gamma = {model.jnd_gamma}$")
     plt.show()
     # device = "cuda" if torch.cuda.is_available() else "cpu"
 
