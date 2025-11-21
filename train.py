@@ -199,8 +199,8 @@ def train(embedder: Embedder,
             messages_logits = extractor(X_wa) # [B, capacity]
 
             reconstruction_loss = lambda_1 * ((normalize(X) - X_w) ** 2).mean()
-            # decoding_loss = lambda_2 * (F.binary_cross_entropy_with_logits(messages_logits, messages))
-            decoding_loss = lambda_2 * ((torch.nn.functional.sigmoid(messages_logits) - messages.to(torch.float32)) ** 2).mean() # Try MSE instead...
+            decoding_loss = lambda_2 * (F.binary_cross_entropy_with_logits(messages_logits, messages.to(torch.float32)))
+            # decoding_loss = lambda_2 * ((torch.nn.functional.sigmoid(messages_logits) - messages.to(torch.float32)) ** 2).mean() # Try MSE instead...
             current_loss = reconstruction_loss + decoding_loss
             current_loss.backward()
             optimizer.step()
@@ -400,4 +400,5 @@ if __name__ == "__main__":
                    batch_size = batch_size, 
                    create_scheduler = True,
                    data_generation_seed = seed,
-                   epochs = 50)
+                   epochs = 50,
+                   lambda_1 = 0.2)
