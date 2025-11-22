@@ -17,7 +17,6 @@ from augmentations.augmenter import Augmenter
 from typing import Union
 from dataset import ImageDataset
 from sklearn.model_selection import train_test_split
-from functools import partial
 
 class LinearWarmupCosineAnnealingLR(_LRScheduler):
     """
@@ -127,10 +126,11 @@ def eval(loader: torch.utils.data.DataLoader, embedder: Embedder, extractor: Ext
     if is_extractor_train:
         extractor.train()
     
-    return acc.mean(), psnrs.mean()
+    return float(acc.mean()), float(psnrs.mean())
 
 def state_checkpoint(epoch: int, 
                      eval_acc: float, 
+                     eval_psnr : float,
                      embedder: Embedder, 
                      extractor: Extractor, 
                      augmenter: Augmenter,
@@ -141,6 +141,7 @@ def state_checkpoint(epoch: int,
     d = {
         "epoch": epoch,
         "eval_acc": eval_acc,
+        "eval_psnr": eval_psnr,
         "embedder": embedder.to_dict(),
         "extractor": extractor.to_dict(),
         "optimizer": serialize_optimizer(optimizer),
@@ -200,7 +201,6 @@ def train(embedder: Embedder,
 
             reconstruction_loss = lambda_1 * ((normalize(X) - X_w) ** 2).mean()
             decoding_loss = lambda_2 * (F.binary_cross_entropy_with_logits(messages_logits, messages.to(torch.float32)))
-            # decoding_loss = lambda_2 * ((torch.nn.functional.sigmoid(messages_logits) - messages.to(torch.float32)) ** 2).mean() # Try MSE instead...
             current_loss = reconstruction_loss + decoding_loss
             current_loss.backward()
             optimizer.step()
@@ -233,13 +233,15 @@ def train(embedder: Embedder,
         print(f"Epoch {i + 1} validation message recovery accuracy: {current_acc :.4f}")
         print(f"Epoch {i + 1} validation imperceptibility: {current_psnr :.4f} dB")
 
+        # Instead of saving best accuracy model always, consider reconstruction as well
+        # lambda1 * current_psnr + lambda2 * current_acc, to reflect loss weights?
         if current_acc > best_acc:
             best_acc = current_acc
             print("Creating the checkpoint for new best accuracy.")
-            state_checkpoint(i + 1, best_acc, embedder, extractor, augmenter, optimizer, scheduler, chck_path, "best.pt")
+            state_checkpoint(i + 1, best_acc, current_psnr, embedder, extractor, augmenter, optimizer, scheduler, chck_path, "best.pt")
         
         print("Creating the checkpoint for the last epoch.")
-        state_checkpoint(i + 1, best_acc, embedder, extractor, augmenter, optimizer, scheduler, chck_path, "last.pt")
+        state_checkpoint(i + 1, current_acc, current_psnr, embedder, extractor, augmenter, optimizer, scheduler, chck_path, "last.pt")
 
         print("Saving training metadata.")
 
@@ -265,9 +267,9 @@ def load_and_train(model_conf_path: str,
                    adam_betas = (0.9, 0.999),
                    create_scheduler = True,
                    warmup_ratio = 0.2,
-                   lambda_1: float = 0.25, # MSE scaling factor
+                   lambda_1: float = 1.0, # MSE scaling factor
                    lambda_2: float = 1.0, # BCE scaling factor
-                   loss_ema_beta: float = 0.9
+                   loss_ema_beta: float = 0.9 # EMA weight for logging loss values
                    ):
     
     """
@@ -323,14 +325,12 @@ def load_and_train(model_conf_path: str,
     train_dl = torch.utils.data.DataLoader(train_dataset, batch_size = training_metadata["batch_size"], 
                                            shuffle = True, 
                                            num_workers = 2,
-                                           # collate_fn = partial(collate_fn, target_resolution = conf["embedder"]["true_resolution"]),
                                            pin_memory = True,
                                            )
     
     eval_dl = torch.utils.data.DataLoader(eval_dataset, batch_size = training_metadata["batch_size"], 
                                           shuffle = True, 
                                           num_workers = 2,
-                                          # collate_fn = partial(collate_fn, target_resolution = conf["embedder"]["true_resolution"]),
                                           pin_memory = True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -338,13 +338,13 @@ def load_and_train(model_conf_path: str,
     if not os.path.exists(chck_path):
         os.mkdir(chck_path)
     
-    last_path = os.path.join(chck_path, "last.pt")
+    last_path = os.path.join(chck_path, "best.pt")
     if os.path.exists(last_path):
-        d = torch.load(last_path)
+        print("Loading existing checkpoint.")
+        d = torch.load(last_path, weights_only = True)
         embedder = Embedder.load(d["embedder"])
         extractor = Extractor.load(d["extractor"])
         augmenter = Augmenter.load(d["augmenter"])
-
         embedder = embedder.to(device)
         extractor = extractor.to(device)
         augmenter = augmenter.to(device)

@@ -1,13 +1,14 @@
 # capacity and true_resolution should match for embedder and extractor
-# this is redundant, but more convenient for parsing.
+# this is redundant, but more convenient for parsing
 
 embedder:
   capacity: 32
   num_layers: 3
   true_resolution: 128
-  # Embedder is much shallower compared to extractor, try turning off StochasticPath for embedder
+  # Embedder is much shallower compared to extractor, turn off stochastic Path for embedder
   cnext_drop: 0
   base_channels: 32
+  jnd_alpha: 0.2
 
 extractor:
   # Equivalent to ConvNeXt-T (T = Tiny)
@@ -18,8 +19,8 @@ extractor:
   cnext_drop: 0.05
 
 augmentations_train:
-  max_steps_ratio: 0.2
-  id_start_prob: 0.95
+  max_steps_ratio: 0.2 # Ratio of training steps for which uniformization of augmentation probability distribution will take place
+  id_start_prob: 0.95 # Initial probablity of identity augmentation
   
   aug_strength:
     DiffJPEG:
@@ -88,7 +89,7 @@ augmentations_train:
 augmentations_eval:
   aug_strength:
     DiffJPEG:
-      min_quality: 40
+      min_quality: 50
       max_quality: 80
     
     GaussianBlur:
@@ -96,15 +97,15 @@ augmentations_eval:
       max_kernel_size: 17
     
     Brightness:
-      min_factor: 0.5
+      min_factor: 1.5
       max_factor: 2
     
     Contrast:
-      min_factor: 0.5
+      min_factor: 1.5
       max_factor: 2
     
     Saturation:
-      min_factor: 0.5
+      min_factor: 1.5
       max_factor: 2
     
     Hue:
@@ -117,11 +118,11 @@ augmentations_eval:
     
     Resize:
       min_size: 0.5
-      max_size: 1.5
+      max_size: 0.5
     
     Crop:
       min_size: 0.33
-      max_size: 1
+      max_size: 0.5
     
     Perspective:
       min_distortion_scale: 0.1
@@ -134,9 +135,9 @@ augmentations_eval:
       # No parameters
 
     Combine:
-      min_quality: 40
+      min_quality: 50
       max_quality: 80
-      min_brightness_factor: 0.5
+      min_brightness_factor: 1.5
       max_brightness_factor: 2
       min_distortion_scale: 0.1
       max_distortion_scale: 0.5

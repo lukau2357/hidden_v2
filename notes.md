@@ -78,3 +78,7 @@ Max resolution: (640, 640, 3)
 ## TODO (Completeness)
 * Investigate previous implementation.
 * Convince yourself why DCT implementation works.
+
+* Training second iteration:
+    * Set JND to 0.2. Perhaps make it a learnable parameter, and enforce it's values between 0 and 1?
+    * Increase reconstruction loss weight.

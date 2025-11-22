@@ -16,6 +16,7 @@ from torchvision import transforms
 from utils import normalize, unnormalize, psnr
 from augmentations.augmenter import Augmenter
 from dataset import ImageDataset
+from train import eval
 
 if __name__ == "__main__":
     device = "cuda"
@@ -30,61 +31,66 @@ if __name__ == "__main__":
     tr = conf["embedder"]["true_resolution"]
 
     transform = transforms.Compose([
-            transforms.RandomResizedCrop(size = (128, 128), scale = (0.5, 1)),
+            # transforms.RandomResizedCrop(size = (128, 128), scale = (0.5, 1)),
+            # transforms.Resize((128, 128)),
             transforms.ToTensor()
-        ])
+    ])
 
     X = transform(image_orig).unsqueeze(0).to(device) * 255.0
+    checkpoint = torch.load("./first_checkpoint/best.pt", weights_only = True)
 
-    model = Embedder(**conf["embedder"]).to(device)
-    params = 0
-
-    for param in model.parameters():
-        if param.requires_grad:
-            params += param.numel()
-        
-    test = Augmenter(**conf["augmentations_train"]).to(device)
-    extractor = Extractor(**conf["extractor"]).to(device)
-
-    params = 0
-    for param in model.parameters():
-        if param.requires_grad:
-            params += param.numel()
-    print(f"Number of embedder parameters: {params / 1e6}M.")
-
-    message = (torch.rand((1, conf["embedder"]["capacity"]), device = device) >= 0.5).to(torch.int32)
-    X_wm = model(X, message).clamp(-1, 1)
+    embedder = Embedder.load(checkpoint["embedder"]).to(device)
+    extractor = Extractor.load(checkpoint["extractor"]).to(device)
+    # augmenter = Augmenter.load(checkpoint["augmenter"]).to(device)
+    augmenter = DiffJPEG(min_quality = 40, max_quality = 80).to(device)
+    embedder.eval()
+    extractor.eval()
     
-    X = normalize(X)
-    X_ed = test(X, X_wm, train_steps = 40000)
+    message = (torch.rand((1, embedder.capacity), device = device) >= 0.5).to(torch.int32)
+    X_wm = embedder(X, message)
+    X_wm = augmenter(X_wm)
     
-    params = 0
-    for param in extractor.parameters():
+    # print(f"Imperceptibility: {psnr(unnormalize(X_wm), X, max_value = 255.0).item()} dB.")
+
+    preds = extractor(X_wm)
+    l = torch.nn.functional.binary_cross_entropy_with_logits(preds, message.to(torch.float32))
+    l.backward()
+
+    non_zero_grads = 0
+    num_params = 0
+
+    for param in embedder.parameters():
         if param.requires_grad:
-            params += param.numel()
+            num_params += param.numel()
+            non_zero_grads += (param.grad.abs() > 1e-8).sum().item()
     
-    print(f"Number of extractor parameters: {params / 1e6}M.")
+    print(f"Number of embedder parameters: {num_params / 1e6} M.")
+    print(f"Number of non-zero derivatives: {non_zero_grads / 1e6} M.")
+    exit(0)
 
-    preds = extractor(X_ed)
-    print(preds.shape)
+    preds = (preds >= 0).to(torch.int32)
 
-    X = unnormalize(X)
-    X_ed = unnormalize(X_ed)
+    # X = unnormalize(X)
+    X_wm = unnormalize(X_wm)
     print(X.shape)
-    print(X_ed.shape)
+    print(X_wm.shape)
 
-    # X_ed = model.jnd(X) * 255
+    pred_acc = (message == preds).to(torch.float32).mean().item()
+    print(f"Decoding acc: {pred_acc:.2f}")
+
+    # embedder.jnd.gamma = 0.6
+    # X_wm = embedder.jnd(X) * 255
     X = X.cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
-    X_ed = X_ed.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
+    X_wm = X_wm.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
 
     fig, ax = plt.subplots(ncols = 2)
     ax[0].imshow(X)
-    ax[1].imshow(X_ed)
+    ax[1].imshow(X_wm)
     ax[0].set_axis_off()
     ax[1].set_axis_off()
 
     ax[0].set_title("Original image")
-    ax[1].set_title(f"JND with $\gamma = {model.jnd_gamma}$")
+    ax[1].set_title("Watermarked image")
     plt.show()
     # device = "cuda" if torch.cuda.is_available() else "cpu"
 

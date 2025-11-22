@@ -6,8 +6,9 @@ from modules import ConvNeXtBlock, JND, ConvNeXtLayerNorm, MobileNetV2Block
 from utils import normalize, unnormalize
 
 class Embedder(nn.Module):
-    def __init__(self, capacity, 
-                 true_resolution = 256, 
+    def __init__(self, 
+                 capacity,
+                 true_resolution = 128, 
                  in_channels = 3, 
                  base_channels = 96, 
                  num_layers = 4, 
@@ -35,7 +36,6 @@ class Embedder(nn.Module):
         self.conv_next_blocks = conv_next_blocks
 
         self.bottleneck_res = self.true_resolution // 2 ** num_layers
-        self.jnd_alpha = jnd_alpha
         initial_channels = in_channels
         self.initial = nn.Conv2d(in_channels, base_channels, kernel_size = 1)
         encoder_conv = []
@@ -184,6 +184,8 @@ class Embedder(nn.Module):
                 "jnd_alpha": self.jnd_alpha,
                 "jnd_gamma": self.jnd_gamma,
                 "jnd_eps": self.jnd_eps,
+                "true_resolution": self.true_resolution,
+                "conv_next_blocks": self.conv_next_blocks
             },
             "state_dict": self.state_dict()
         }
@@ -202,7 +204,7 @@ class Extractor(nn.Module):
     ConvNeXt paper: https://arxiv.org/pdf/2201.03545
     """
     def __init__(self, capacity, channel_muls, blocks,
-                 true_resolution = 256,
+                 true_resolution = 128,
                  in_channels = 3,
                  base_channels = 96,
                  expansion = 4,
