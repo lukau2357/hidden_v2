@@ -46,10 +46,19 @@ class ConvNeXtBlock(nn.Module):
         return x
 
 class JND(nn.Module):
-    def __init__(self, gamma = 0.3, eps = 1e-6):
+    def __init__(self, 
+                 gamma: float = 0.3, 
+                 eps: float = 1e-6,
+                 luminance_scale: float = 1.0,
+                 contrast_scale: float = 0.117):
+        # Luminance and contrast scaling values taken from MaskMark
+        # https://github.com/hurunyi/MaskWM/blob/master/models/Mask_Model.py#L518
+
         super().__init__()
         self.gamma = gamma
         self.eps = eps
+        self.luminance_scale = luminance_scale
+        self.contrast_scale = contrast_scale
 
         self.luminance_kernel = nn.Parameter(torch.tensor([[1, 1, 1, 1, 1], [1, 2, 2, 2, 1], [1, 2, 0, 2, 1], [1, 2, 2, 2, 1], [1, 1, 1, 1, 1]], dtype = torch.float32).unsqueeze(0).unsqueeze(0), requires_grad = False)
         self.sobelx = nn.Parameter(torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype = torch.float32).unsqueeze(0).unsqueeze(0), requires_grad = False)
@@ -63,11 +72,13 @@ class JND(nn.Module):
 
         LA[LA_mask] = 17 * (1 - torch.sqrt(LA[LA_mask] / 127 + self.eps)) + 3
         LA[~LA_mask] = (3 / 128) * (LA[~LA_mask] - 127) + 3
+        LA *= self.luminance_scale
 
         edgex = nn.functional.conv2d(L, self.sobelx, padding = 1)
         edgey = nn.functional.conv2d(L, self.sobely, padding = 1)
         C = torch.sqrt(edgex ** 2 + edgey ** 2)
         C = (16 * C ** (2.4)) / (C ** 2 + 26 ** 2)
+        C *= self.contrast_scale
 
         # gamma controls luminance masking vs contrast masking tradeoff.
         # Bigger gamma => smaller quantity between (LA, C) is suppressed more, meaning that the larger component will have bigger influence.  

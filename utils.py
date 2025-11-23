@@ -90,3 +90,38 @@ def psnr(X: torch.Tensor, Y: torch.Tensor, max_value : float =  255.0):
     Y = Y.reshape((B, -1))
     mse = ((X - Y) ** 2).mean(dim = -1)
     return 10 * torch.log10(max_value / mse)
+
+def ycbcr_mse_loss(X: torch.tensor, X_wm: torch.tensor, wY: float = 1.0, wC: float = 0.5):
+    # This is called only during training, so X is expected to be in [0, 255]
+    # and X_wm is expected to be in [-1, 1]. Normalize before converting to YCbCr
+
+    # First transform to [0, 1 range]
+    X = X / 255.0
+    X_wm = (X_wm + 1.0) / 2.0
+
+    M = torch.tensor([
+        [ 0.299, 0.587, 0.114],
+        [-0.168736, -0.331264, 0.5],
+        [ 0.5, -0.418688, -0.081312]
+    ], device = X.device, dtype = X.dtype)
+
+    bias = torch.tensor([0.0, 128 / 255.0, 128 / 255.0], device = X.device, dtype = X.dtype)
+
+    def rgb_to_ycbcr(img):
+        img_flat = img.permute(0, 2, 3, 1)  # [B, H, W, 3]
+        ycbcr = torch.tensordot(img_flat, M.T, dims = 1) + bias  # [B, H, W, 3]
+        return ycbcr.permute(0, 3, 1, 2)  # [B, 3, H, W]
+
+    # Compute per-channel MSE, with Y channel having higher importance generally
+    # Additionally transform to [-1, 1] for more balanced gradients 
+    X = rgb_to_ycbcr(X) * 2.0 - 1.0
+    X_wm = rgb_to_ycbcr(X_wm) * 2.0 - 1.0
+
+    Y1, Cb1, Cr1 = X.chunk(3, dim = 1)
+    Y2, Cb2, Cr2 = X_wm.chunk(3, dim  = 1)
+
+    mse_Y  = nn.functional.mse_loss(Y2, Y1)
+    mse_Cb = nn.functional.mse_loss(Cb2, Cb1)
+    mse_Cr = nn.functional.mse_loss(Cr2, Cr1)
+
+    return wY * mse_Y + wC * (mse_Cb + mse_Cr)

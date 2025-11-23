@@ -8,7 +8,9 @@ embedder:
   # Embedder is much shallower compared to extractor, turn off stochastic Path for embedder
   cnext_drop: 0
   base_channels: 32
-  jnd_alpha: 0.2
+  jnd_alpha: 0.25
+  jnd_luminance_scale: 1.0
+  jnd_contrast_scale: 0.2
 
 extractor:
   # Equivalent to ConvNeXt-T (T = Tiny)

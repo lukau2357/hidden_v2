@@ -4,3 +4,5 @@ train2014
 venv/
 __pycache__/
 first_checkpoint
+second_checkpoint
+third_checkpoint

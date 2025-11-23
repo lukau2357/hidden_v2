@@ -82,3 +82,11 @@ Max resolution: (640, 640, 3)
 * Training second iteration:
     * Set JND to 0.2. Perhaps make it a learnable parameter, and enforce it's values between 0 and 1?
     * Increase reconstruction loss weight.
+    * Modulation of JND luminance and contrast maps has a massive impact on imperceptibility. Perhaps make these parameters learnable by
+      the model? Shuold be in [0, 1] range normally.
+
+* First iteration - to low reconstruction impact - 24 dB
+* Second iteration - higher reconstruction impact + schedule for augmentation - 34 dB, recudec JND scaling alpha to 0.2
+* Third iteration - introduced JND luminance and contrast scaling, reduced contrast scaling to 0.117 as per MaskMark. Updated watermark creation
+  JND * (X_wm - input_norm) - expect even higher imperc. with little variation in decoding acc. Change jnd_alpha to 0.3?
+* Second checkpoint actually works with setting contrast scaling to 0.117 and setting jnd_alpha to 0.3

@@ -18,6 +18,8 @@ class Embedder(nn.Module):
                  jnd_alpha = 1.0,
                  jnd_gamma = 0.3,
                  jnd_eps = 1e-6,
+                 jnd_luminance_scale = 1.0,
+                 jnd_contrast_scale = 0.117,
                  conv_next_blocks = True):
         super().__init__()
 
@@ -32,6 +34,9 @@ class Embedder(nn.Module):
         self.jnd_alpha = jnd_alpha
         self.jnd_gamma = jnd_gamma
         self.jnd_eps = jnd_eps
+        self.jnd_luminance_scale = jnd_luminance_scale
+        self.jnd_contrast_scale = jnd_contrast_scale
+
         # Either use ConvNeXt blocks or MobileNetV2 blocks
         self.conv_next_blocks = conv_next_blocks
 
@@ -112,7 +117,7 @@ class Embedder(nn.Module):
         # Interpolation for images of variable size
         self.interp = transforms.Resize((true_resolution, true_resolution), interpolation = transforms.InterpolationMode.BILINEAR)
         # JND - Just Noticeable Difference
-        self.jnd = JND(gamma = jnd_gamma, eps = jnd_eps)
+        self.jnd = JND(gamma = jnd_gamma, eps = jnd_eps, luminance_scale = self.jnd_luminance_scale, contrast_scale = self.jnd_contrast_scale)
 
     def forward(self, X, messages):
         # X => [B, in_channels, H, W], RGB image with [0, 255] quantization
@@ -185,7 +190,9 @@ class Embedder(nn.Module):
                 "jnd_gamma": self.jnd_gamma,
                 "jnd_eps": self.jnd_eps,
                 "true_resolution": self.true_resolution,
-                "conv_next_blocks": self.conv_next_blocks
+                "conv_next_blocks": self.conv_next_blocks,
+                "jnd_luminance_scale": self.jnd_luminance_scale,
+                "jnd_contrast_scale": self.jnd_contrast_scale
             },
             "state_dict": self.state_dict()
         }
@@ -274,7 +281,7 @@ class Extractor(nn.Module):
                 "base_channels": self.base_channels,
                 "expansion": self.expansion,
                 "cnext_ls": self.cnext_ls,
-                "cnext_drop": self.cnext_drop
+                "cnext_drop": self.cnext_drop,
             },
             "state_dict": self.state_dict()
         }

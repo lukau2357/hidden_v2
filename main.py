@@ -18,9 +18,13 @@ from augmentations.augmenter import Augmenter
 from dataset import ImageDataset
 from train import eval
 
+"""
+Ad-hoc script for debuggin mostly, does not contain anything related to model definition, training etc.
+"""
+
 if __name__ == "__main__":
     device = "cuda"
-    # image_orig = Image.open("./val2014/val2014/COCO_val2014_000000000074.jpg")
+    # image_orig = Image.open("./val2014/val2014/COCO_val2014_000000000395.jpg")
     image_orig = Image.open("./test_images/lena.jpg")
     # image_orig = cv2.imread("./val2014/val2014/COCO_val2014_000000000074.jpg")
     # image_orig = cv2.cvtColor(image_orig, cv2.COLOR_BGR2RGB)
@@ -37,20 +41,21 @@ if __name__ == "__main__":
     ])
 
     X = transform(image_orig).unsqueeze(0).to(device) * 255.0
-    checkpoint = torch.load("./first_checkpoint/best.pt", weights_only = True)
-
+    checkpoint = torch.load("./second_checkpoint/best.pt", weights_only = True)
     embedder = Embedder.load(checkpoint["embedder"]).to(device)
+    embedder.jnd_alpha = 0.25
+    embedder.jnd.contrast_scale = 0.2
+
     extractor = Extractor.load(checkpoint["extractor"]).to(device)
     # augmenter = Augmenter.load(checkpoint["augmenter"]).to(device)
-    augmenter = DiffJPEG(min_quality = 40, max_quality = 80).to(device)
+    # augmenter = DiffJPEG(min_quality = 40, max_quality = 80).to(device)
     embedder.eval()
     extractor.eval()
     
     message = (torch.rand((1, embedder.capacity), device = device) >= 0.5).to(torch.int32)
     X_wm = embedder(X, message)
-    X_wm = augmenter(X_wm)
     
-    # print(f"Imperceptibility: {psnr(unnormalize(X_wm), X, max_value = 255.0).item()} dB.")
+    print(f"Imperceptibility: {psnr(unnormalize(X_wm), X, max_value = 255.0).item()} dB.")
 
     preds = extractor(X_wm)
     l = torch.nn.functional.binary_cross_entropy_with_logits(preds, message.to(torch.float32))
@@ -59,19 +64,11 @@ if __name__ == "__main__":
     non_zero_grads = 0
     num_params = 0
 
-    for param in embedder.parameters():
-        if param.requires_grad:
-            num_params += param.numel()
-            non_zero_grads += (param.grad.abs() > 1e-8).sum().item()
-    
-    print(f"Number of embedder parameters: {num_params / 1e6} M.")
-    print(f"Number of non-zero derivatives: {non_zero_grads / 1e6} M.")
-    exit(0)
-
     preds = (preds >= 0).to(torch.int32)
 
     # X = unnormalize(X)
     X_wm = unnormalize(X_wm)
+    print(X_wm.min(), X_wm.max())
     print(X.shape)
     print(X_wm.shape)
 
@@ -79,18 +76,29 @@ if __name__ == "__main__":
     print(f"Decoding acc: {pred_acc:.2f}")
 
     # embedder.jnd.gamma = 0.6
-    # X_wm = embedder.jnd(X) * 255
-    X = X.cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
-    X_wm = X_wm.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
+    X_jnd = embedder.jnd(X) * 255
+    X = X.cpu().numpy()[0].transpose((1, 2, 0))
+    X_wm = X_wm.detach().cpu().numpy()[0].transpose((1, 2, 0))
 
-    fig, ax = plt.subplots(ncols = 2)
+    diff = 25 * np.abs(X - X_wm).astype(np.uint8)
+    X = X.astype(np.uint8)
+    X_wm = X_wm.astype(np.uint8)
+    X_jnd = X_jnd.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
+
+    fig, ax = plt.subplots(ncols = 4)
     ax[0].imshow(X)
     ax[1].imshow(X_wm)
+    ax[3].imshow(X_jnd)
+
     ax[0].set_axis_off()
     ax[1].set_axis_off()
+    ax[2].set_axis_off()
+    ax[3].set_axis_off()
 
     ax[0].set_title("Original image")
     ax[1].set_title("Watermarked image")
+    ax[2].set_title("Global watermark")
+    ax[3].set_title("JND heatmap")
     plt.show()
     # device = "cuda" if torch.cuda.is_available() else "cpu"
 

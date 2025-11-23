@@ -11,7 +11,7 @@ import torch
 
 from itertools import chain
 from torch.optim.lr_scheduler import _LRScheduler
-from utils import normalize, unnormalize, psnr
+from utils import normalize, unnormalize, psnr, ycbcr_mse_loss
 from model import Embedder, Extractor
 from augmentations.augmenter import Augmenter
 from typing import Union
@@ -180,6 +180,13 @@ def train(embedder: Embedder,
     psnr_values = train_metadata.get("psnr_values", [])
     prev_recon = train_metadata.get("prev_recon", 0)
     prev_decoding = train_metadata.get("prev_decoding", 0)
+    use_ycbcr_mse = train_metadata.get("use_ycbcr_mse")
+
+    if use_ycbcr_mse:
+        recon_loss_f = ycbcr_mse_loss
+
+    else:
+        recon_loss_f = lambda x, x_wm: ((normalize(x) - x_wm) ** 2).mean()
 
     embedder.train()
     extractor.train()
@@ -199,7 +206,7 @@ def train(embedder: Embedder,
             X_wa = augmenter(normalize(X), X_w, train_steps = train_steps)
             messages_logits = extractor(X_wa) # [B, capacity]
 
-            reconstruction_loss = lambda_1 * ((normalize(X) - X_w) ** 2).mean()
+            reconstruction_loss = lambda_1 * recon_loss_f(X, X_w)
             decoding_loss = lambda_2 * (F.binary_cross_entropy_with_logits(messages_logits, messages.to(torch.float32)))
             current_loss = reconstruction_loss + decoding_loss
             current_loss.backward()
@@ -269,7 +276,8 @@ def load_and_train(model_conf_path: str,
                    warmup_ratio = 0.2,
                    lambda_1: float = 1.0, # MSE scaling factor
                    lambda_2: float = 1.0, # BCE scaling factor
-                   loss_ema_beta: float = 0.9 # EMA weight for logging loss values
+                   loss_ema_beta: float = 0.9, # EMA weight for logging loss values
+                   use_ycbcr_mse: bool = False # MSE in RGB or YCbCr
                    ):
     
     """
@@ -310,7 +318,8 @@ def load_and_train(model_conf_path: str,
             "data_generation_seed": data_generation_seed,
             "uses_lr_scheduler": create_scheduler,
             "aug_linear_steps_ratio": conf["augmentations_train"].get("max_steps_ratio"),
-            "id_start_prob": conf["augmentations_train"].get("id_start_prob")
+            "id_start_prob": conf["augmentations_train"].get("id_start_prob"),
+            "use_ycbcr_mse": use_ycbcr_mse
         }
 
     image_files = os.listdir(data_root_path)
@@ -390,7 +399,7 @@ if __name__ == "__main__":
     data_root_path = os.path.join("val2014", "val2014")
     batch_size = 8
     model_conf_path = os.path.join("model_configurations", "base.yaml")
-    checkpoint_path = "./first_checkpoint"
+    checkpoint_path = "./third_checkpoint"
 
     # TODO: Reproducibility guaranteed ONLY IF TRAINING IS NOT INTERRPUTED!
     seed = 41
@@ -400,5 +409,7 @@ if __name__ == "__main__":
                    batch_size = batch_size, 
                    create_scheduler = True,
                    data_generation_seed = seed,
-                   epochs = 50,
-                   lambda_1 = 0.2)
+                   epochs = 60,
+                   lambda_1 = 0.8,
+                   lambda_2 = 1.0,
+                   use_ycbcr_mse = False)
