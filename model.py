@@ -61,7 +61,7 @@ class Embedder(nn.Module):
             
             encoder_conv.append(nn.Sequential(*current_ops))
 
-            current_op = nn.Conv2d(in_channels, out_channels, kernel_size = 2, stride = 2) if conv_next_blocks else nn.Conv2d(in_channels, out_channels, kernel_size = 2, stride = 2)
+            current_op = nn.Conv2d(in_channels, out_channels, kernel_size = 2, stride = 2)
             encoder_down.append(current_op)
 
         self.encoder_conv = nn.ModuleList(encoder_conv)

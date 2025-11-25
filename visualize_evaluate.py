@@ -88,8 +88,9 @@ def robustness_eval(checkpoint_path: str, conf_path: str, data_path: str, model_
 
     aug_groups = {
         "Valuemetric": ["DiffJPEG", "Brightness", "Contrast", "GaussianBlur", "Hue", "Saturation"],
-        "Geometric": ["HorizontalFlip", "Perspective", "Resize", "Crop", "Rotate", "Combine"],
-        "Splicing": ["PixelSplicing", "BoxSplicing"]
+        "Geometric": ["HorizontalFlip", "Perspective", "Resize", "Crop", "Rotate"],
+        "Splicing": ["PixelSplicing", "BoxSplicing"],
+        "Combine": ["Combine"]
     }
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -113,7 +114,7 @@ def robustness_eval(checkpoint_path: str, conf_path: str, data_path: str, model_
     image_files = os.listdir(data_path)
     _, eval_files = train_test_split(image_files, train_size = training_metadata["train_ratio"], random_state = training_metadata["data_generation_seed"])
     eval_dataset = ImageDataset(data_path, eval_files, embedder.true_resolution)
-    eval_dataset.images = eval_dataset.images[:100]
+    # eval_dataset.images = eval_dataset.images[:100]
 
     eval_dl = torch.utils.data.DataLoader(eval_dataset, batch_size = training_metadata["batch_size"], 
                                           shuffle = True, 
@@ -141,5 +142,5 @@ def robustness_eval(checkpoint_path: str, conf_path: str, data_path: str, model_
         json.dump(res, f, indent = 4)
 
 if __name__ == "__main__":
-    # training_plot("./first_checkpoint")
-    robustness_eval("./first_checkpoint", "./model_configurations/base.yaml", "./val2014/val2014")
+    # training_plot("./third_checkpoint")
+    robustness_eval("./third_checkpoint", "./model_configurations/base.yaml", "./val2014/val2014")

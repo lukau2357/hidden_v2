@@ -16,6 +16,8 @@ class ImageDataset(torch.utils.data.Dataset):
         self.target_resolution = target_resolution
         # default random aspect ratio for this transformation is ratio=(0.75, 1.3333333333333333)
         # https://docs.pytorch.org/vision/main/generated/torchvision.transforms.RandomResizedCrop.html
+
+        # TODO: For evaluation use deterministic crops!
         self.rc_transform = Compose([
             RandomResizedCrop(size = (target_resolution, target_resolution), scale = (0.5, 1)),
             ToTensor()

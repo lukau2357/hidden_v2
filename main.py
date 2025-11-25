@@ -41,9 +41,14 @@ if __name__ == "__main__":
     ])
 
     X = transform(image_orig).unsqueeze(0).to(device) * 255.0
-    checkpoint = torch.load("./second_checkpoint/best.pt", weights_only = True)
+    checkpoint = torch.load("./third_checkpoint/best.pt", weights_only = True)
+    print(checkpoint["embedder"]["args"])
+    exit(0)
+    print(f"Checkpoint accuracy: {checkpoint['eval_acc']}")
+    print(f"Checkpoint imperceptibility: {checkpoint['eval_psnr']}")
+
     embedder = Embedder.load(checkpoint["embedder"]).to(device)
-    embedder.jnd_alpha = 0.25
+    embedder.jnd_alpha = 0.3
     embedder.jnd.contrast_scale = 0.2
 
     extractor = Extractor.load(checkpoint["extractor"]).to(device)
@@ -52,17 +57,27 @@ if __name__ == "__main__":
     embedder.eval()
     extractor.eval()
     
+    em_params, ex_params = 0, 0
+    for param in embedder.parameters():
+        if param.requires_grad:
+            em_params += param.numel()
+
+    for param in extractor.parameters():
+        if param.requires_grad:
+            ex_params += param.numel()
+    
+    print(f"Embedder number of parameters: {em_params / 1e6} M.")
+    print(f"Extractor number of parameters: {ex_params / 1e6} M.")
+
     message = (torch.rand((1, embedder.capacity), device = device) >= 0.5).to(torch.int32)
-    X_wm = embedder(X, message)
+    message = torch.zeros((1, embedder.capacity), device = device).to(torch.int32)
+    with torch.no_grad():
+        X_wm = embedder(X, message)
     
     print(f"Imperceptibility: {psnr(unnormalize(X_wm), X, max_value = 255.0).item()} dB.")
 
-    preds = extractor(X_wm)
-    l = torch.nn.functional.binary_cross_entropy_with_logits(preds, message.to(torch.float32))
-    l.backward()
-
-    non_zero_grads = 0
-    num_params = 0
+    with torch.no_grad():
+        preds = extractor(X)
 
     preds = (preds >= 0).to(torch.int32)
 
@@ -76,29 +91,33 @@ if __name__ == "__main__":
     print(f"Decoding acc: {pred_acc:.2f}")
 
     # embedder.jnd.gamma = 0.6
-    X_jnd = embedder.jnd(X) * 255
+    embedder.jnd_luminance_scale = 1
+    embedder.jnd.contrast_scale = 1
+    embedder.jnd.gamma = 0.3
+    X_jnd1 = embedder.jnd(X) * 255.0
+    embedder.jnd.contrast_scale = 0.2
+    X_jnd2 = embedder.jnd(X) * 255.0
     X = X.cpu().numpy()[0].transpose((1, 2, 0))
-    X_wm = X_wm.detach().cpu().numpy()[0].transpose((1, 2, 0))
+    X_wm = X_wm.cpu().numpy()[0].transpose((1, 2, 0))
 
     diff = 25 * np.abs(X - X_wm).astype(np.uint8)
     X = X.astype(np.uint8)
     X_wm = X_wm.astype(np.uint8)
-    X_jnd = X_jnd.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
+    X_jnd1 = X_jnd1.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
+    X_jnd2 = X_jnd2.detach().cpu().numpy()[0].transpose((1, 2, 0)).astype(np.uint8)
 
-    fig, ax = plt.subplots(ncols = 4)
+    fig, ax = plt.subplots(ncols = 3)
     ax[0].imshow(X)
-    ax[1].imshow(X_wm)
-    ax[3].imshow(X_jnd)
+    ax[1].imshow(X_jnd1)
+    ax[2].imshow(X_jnd2)
 
     ax[0].set_axis_off()
     ax[1].set_axis_off()
     ax[2].set_axis_off()
-    ax[3].set_axis_off()
 
     ax[0].set_title("Original image")
-    ax[1].set_title("Watermarked image")
-    ax[2].set_title("Global watermark")
-    ax[3].set_title("JND heatmap")
+    ax[1].set_title("JND heatmap\n" + r"$\gamma = 0.3, w_1 = 1, w_2 = 1$")
+    ax[2].set_title("JND heatmap\n" + r"$\gamma = 0.3 w_1 = 1, w_2 = 0.2$")
     plt.show()
     # device = "cuda" if torch.cuda.is_available() else "cpu"
 

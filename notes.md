@@ -90,3 +90,10 @@ Max resolution: (640, 640, 3)
 * Third iteration - introduced JND luminance and contrast scaling, reduced contrast scaling to 0.117 as per MaskMark. Updated watermark creation
   JND * (X_wm - input_norm) - expect even higher imperc. with little variation in decoding acc. Change jnd_alpha to 0.3?
 * Second checkpoint actually works with setting contrast scaling to 0.117 and setting jnd_alpha to 0.3
+
+WAM - ~97M parameters (~1M embedder + ~96M extracotr). 38 dB imperceptibility.
+My model - ~29M parameters (~2M embedder + ~27M extractor). 41 dB impercepbility. Actually a big difference, becase of applied log in PSNR.
+MaskMark - ~63M parameters, ~39 dB imperceptibility.
+VideoSeal - ~16M + ~24M, ~47 dB imperceptibility, but my model seemingly has better robustness to valuemetric and geometric transformations.
+
+Passing an image without watermark should yield an empty message, however that is not the case, I've tested VideoSeal the situation is the same. The issue is that embedding a message with all 0s in the model does not yield an image without distortions, so if we expect the model to predict all 0s the input image should also be watermarked.
