@@ -19,10 +19,6 @@ from dataset import ImageDataset
 from sklearn.model_selection import train_test_split
 
 class LinearWarmupCosineAnnealingLR(_LRScheduler):
-    """
-    Scheduler popularized by Attention is all you need paper. Learning rate is warmed up linearly for the given number of steps first,
-    then decayed following a cosine schedule.
-    """
     def __init__(self, optimizer, warmup_steps, max_steps, eta_min = 0.0, last_epoch = -1):
         assert max_steps > warmup_steps, "max_steps must be greater than warmup_steps"
 

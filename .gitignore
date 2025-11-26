@@ -3,6 +3,6 @@ val2014
 train2014
 venv/
 __pycache__/
-first_checkpoint
-second_checkpoint
-third_checkpoint
+dummy.py
+notes.md
+checkpoint_v1*
