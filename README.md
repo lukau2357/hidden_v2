@@ -19,11 +19,15 @@ For the embedder we use a ConvNeXt based UNet, while for the extractor we use Co
 
 ![no figure](./figures/convnext.png)
 
-![no figure](./figures/embedder.drawio(1).png)
 
-![no figure](./figures/extractor.drawio(1).png)
+![no figure](./figures/embedder.png)
+
+
+![no figure](./figures/extractor.png)
+
 
 Augmentations used during training:
+
 ![no figure](./figures/aug_examples.png)
 
 For JPEG we use a custom differentiable implementation based on (https://machine-learning-and-security.github.io/papers/mlsec17_paper_54.pdf), and JND - Just Noticeable Difference watermark attenuation. Corresponding PyTorch modules can be found [here](augmentations/valuemetric.py) and [here](modules.py).
