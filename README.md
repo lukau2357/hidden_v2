@@ -12,7 +12,13 @@ As mentioned above, the watermark might be vissible if embedding in higher resol
 ![no figure](./figures/failure_example.png)
 
 ## Usage
-After cloning and installing requirements, download the checkpoint from the following [link](https://drive.google.com/file/d/1AoXfibaENSebCEYdAmwOwPvHoLsPf2gk/view?usp=drive_link) to this directory. You can see usage examples in [example.py](example.py).
+Create a virtual environment and install PyTorch with appropriate CUDA support, for example: 
+
+```
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
+```
+
+Implementation used torch==2.5.1+cu118 and Python 3.10.10, this might change depending on your system's CUDA version. Refer to https://pytorch.org/get-started/locally/ for more details. After that, install additional requirements from requirements.txt. Download the checkpoint from the following [link](https://drive.google.com/file/d/1AoXfibaENSebCEYdAmwOwPvHoLsPf2gk/view?usp=drive_link) to this directory. You can see usage examples in [example.py](example.py).
 
 ## Architecture details
 For the embedder we use a ConvNeXt based UNet, while for the extractor we use ConvNeXt-Tiny.
@@ -28,6 +34,6 @@ For the embedder we use a ConvNeXt based UNet, while for the extractor we use Co
 
 Augmentations used during training:
 
-![no figure](./figures/aug_examples.png)
+![no figure](./figures/aug_parameters.png)
 
 For JPEG we use a custom differentiable implementation based on (https://machine-learning-and-security.github.io/papers/mlsec17_paper_54.pdf), and JND - Just Noticeable Difference watermark attenuation. Corresponding PyTorch modules can be found [here](augmentations/valuemetric.py) and [here](modules.py).

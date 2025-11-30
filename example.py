@@ -13,17 +13,15 @@ if __name__ == "__main__":
 
     # Add paths to images you want to watermark
     images = [# "./val2014/val2014/COCO_val2014_000000013333.jpg",
-               # "./test_images/lena.jpg",
+               "./test_images/lena.jpg",
                # "./val2014/val2014/COCO_val2014_000000002149.jpg",
                # "./val2014/val2014/COCO_val2014_000000020371.jpg",
-               "./val2014/val2014/COCO_val2014_000000000285.jpg"
+               # "./val2014/val2014/COCO_val2014_000000000285.jpg"
                ]
     
     image_orig = [Image.open(x) for x in images]
-    with open("./model_configurations/base.yaml", encoding = "utf-8") as f:
-        conf = yaml.safe_load(f)
 
-    checkpoint = torch.load("./checkpoint_v1/best.pt", weights_only = True)
+    checkpoint = torch.load("./third_checkpoint/best.pt", weights_only = True)
     true_resolution = checkpoint["embedder"]["args"]["true_resolution"]
 
     # If this is set to False, all images in the batch need to have same resolution!
